@@ -1,0 +1,230 @@
+{
+  "generators": [
+    {
+      "name": "clientes",
+      "topic": "clientes",
+      "table": "clientes",
+      "connection": "pg",
+      "row": {
+        "numero_whatsapp": {
+          "_gen": "string",
+          "expr": "55119#{number.numberBetween '10000000','99999999'}"
+        },
+        "nome": { "_gen": "string", "expr": "#{Name.fullName}" },
+        "cnpj": {
+          "_gen": "string",
+          "expr": "#{number.numberBetween '10','99'}.#{number.numberBetween '100','999'}.#{number.numberBetween '100','999'}/0001-#{number.numberBetween '10','99'}"
+        },
+        "cidade": { "_gen": "string", "expr": "#{Address.city}" },
+        "estado": {
+          "_gen": "oneOf",
+          "choices": ["SP", "RJ", "MG", "RS", "PR", "SC", "BA", "PE", "GO", "CE"]
+        },
+        "email": { "_gen": "string", "expr": "#{Internet.emailAddress}" },
+        "tipo": "atacado",
+        "membro_grupo": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": true, "weight": 0.4 },
+            { "value": false, "weight": 0.6 }
+          ]
+        }
+      },
+      "localConfigs": { "maxEvents": 60 }
+    },
+    {
+      "name": "atendimentos",
+      "topic": "atendimentos",
+      "directory": "/data",
+      "connection": "fs",
+      "data": {
+        "conversa_id": { "_gen": "sequentialInteger" },
+        "numero_whatsapp": {
+          "_gen": "string",
+          "expr": "55119#{number.numberBetween '10000000','99999999'}"
+        },
+        "nome_cliente": { "_gen": "string", "expr": "#{Name.fullName}" },
+        "tipo_cliente": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": "atacado", "weight": 0.85 },
+            { "value": "varejo", "weight": 0.15 }
+          ]
+        },
+        "cliente_recorrente": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": true, "weight": 0.45 },
+            { "value": false, "weight": 0.55 }
+          ]
+        },
+        "origem": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": "campanha_verao_2026", "weight": 0.35 },
+            { "value": "campanha_dia_das_maes", "weight": 0.25 },
+            { "value": "organico", "weight": 0.40 }
+          ]
+        },
+        "status": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": "resolvido", "weight": 0.65 },
+            { "value": "convertido", "weight": 0.20 },
+            { "value": "pendente", "weight": 0.10 },
+            { "value": "descartado", "weight": 0.05 }
+          ]
+        },
+        "aceitou_grupo": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": true, "weight": 0.50 },
+            { "value": false, "weight": 0.35 },
+            { "value": null, "weight": 0.15 }
+          ]
+        },
+        "escalou_humano": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": false, "weight": 0.88 },
+            { "value": true, "weight": 0.12 }
+          ]
+        },
+        "duracao_segundos": {
+          "_gen": "uniformDistribution",
+          "bounds": [45, 1200],
+          "decimals": 0
+        },
+        "iniciada_em": {
+          "_gen": "string",
+          "expr": "2026-04-#{number.numberBetween '01','16'}T#{number.numberBetween '08','20'}:#{number.numberBetween '00','59'}:00"
+        },
+        "historico": {
+          "_gen": "oneOf",
+          "choices": [
+            "Cliente perguntou sobre tabela de preços para conjuntos de bebê 0-3 meses. Agente informou valores e condições de pagamento. Cliente demonstrou interesse e solicitou catálogo.",
+            "Lojista recorrente tirou dúvida sobre prazo de entrega para o interior do Paraná. Agente confirmou 7 dias úteis via transportadora parceira.",
+            "Cliente novo perguntou sobre pedido mínimo para atacado. Agente explicou MOQ de R$500 e condições de pagamento PIX e boleto 30 dias.",
+            "Lojista perguntou sobre disponibilidade de vestidos tamanho 4 para o próximo lançamento. Agente informou que o lançamento ocorre em 15 dias e convidou para o grupo.",
+            "Cliente reclamou que o pedido anterior chegou com peças faltando. Agente pediu desculpas e escalou para atendimento humano para resolver a reposição.",
+            "Lojista perguntou sobre faixa etária dos produtos. Agente explicou que a loja atende de 0 a 12 anos com foco em 0 a 6 anos.",
+            "Cliente novo veio de campanha do Facebook perguntando sobre pijamas. Agente apresentou a loja, condições de atacado e convidou para o grupo de lançamentos.",
+            "Lojista recorrente perguntou se já saiu o novo catálogo de inverno. Agente informou que o lançamento está previsto para a próxima semana no grupo.",
+            "Cliente perguntou sobre formas de pagamento. Agente explicou PIX com desconto, boleto 30/60 dias e cartão de crédito em até 3x.",
+            "Lojista de varejo entrou em contato querendo comprar 2 peças. Agente informou que a loja trabalha apenas com atacado para lojistas.",
+            "Cliente perguntou sobre política de troca e devolução. Agente explicou prazo de 7 dias para defeito de fabricação.",
+            "Lojista recorrente fez pedido de reposição de bodies brancos tamanho P. Agente confirmou disponibilidade e encaminhou para finalização.",
+            "Cliente novo perguntou sobre marcas disponíveis. Agente apresentou as marcas parceiras e diferenciais de qualidade.",
+            "Lojista perguntou sobre desconto para pedidos acima de R$2000. Agente informou tabela progressiva de descontos.",
+            "Cliente veio de campanha dia das mães perguntando sobre conjuntos para presentear. Agente redirecionou para atacado e explicou o modelo de negócio.",
+            "Lojista recorrente perguntou sobre novidades para o inverno 2026. Agente compartilhou prévia das categorias e convidou para o grupo.",
+            "Cliente perguntou sobre prazo de entrega para São Paulo capital. Agente confirmou 3 a 5 dias úteis.",
+            "Lojista novo perguntou como funciona o processo de cadastro. Agente explicou que basta enviar CNPJ e dados da loja.",
+            "Cliente reclamou de atraso na entrega do último pedido. Agente verificou status e informou que o pedido estava em trânsito.",
+            "Lojista perguntou sobre disponibilidade de macacões para recém-nascido. Agente confirmou estoque e enviou fotos das opções disponíveis.",
+            "Cliente perguntou sobre embalagem dos produtos para revenda. Agente explicou que os produtos vêm em embalagem própria com etiqueta.",
+            "Lojista recorrente perguntou sobre condições especiais para compra de coleção completa. Agente apresentou proposta de desconto progressivo.",
+            "Cliente novo perguntou sobre qualidade dos tecidos. Agente explicou que todos os produtos são certificados pelo INMETRO.",
+            "Lojista perguntou sobre frete grátis. Agente informou que frete grátis é disponível para pedidos acima de R$1500.",
+            "Cliente veio de campanha verão perguntando sobre biquínis infantis. Agente apresentou a coleção de praia disponível.",
+            "Lojista recorrente confirmou participação no próximo lançamento e perguntou sobre novidades. Agente compartilhou prévia exclusiva.",
+            "Cliente perguntou sobre tamanhos disponíveis para crianças de 8 anos. Agente informou que trabalha até tamanho 12.",
+            "Lojista novo perguntou sobre prazo para primeira entrega. Agente explicou processo e prazo padrão de 5 a 7 dias úteis.",
+            "Cliente perguntou sobre produtos para bebês prematuros. Agente informou disponibilidade de linha especial RN.",
+            "Lojista recorrente perguntou sobre status do pedido feito na semana anterior. Agente verificou e confirmou que estava em separação.",
+            "Cliente novo veio de indicação de outro lojista. Agente fez boas-vindas especiais e apresentou condições exclusivas para indicados.",
+            "Lojista perguntou sobre possibilidade de personalização de etiquetas. Agente informou que personalização está disponível para pedidos acima de R$3000.",
+            "Cliente perguntou sobre linha de roupas para festa junina. Agente apresentou coleção temática disponível.",
+            "Lojista recorrente perguntou sobre desconto para pagamento antecipado. Agente informou 5% de desconto para PIX antecipado.",
+            "Cliente novo perguntou sobre diferença entre atacado e varejo. Agente explicou modelo de negócio e condições mínimas.",
+            "Lojista perguntou sobre disponibilidade de uniformes escolares. Agente informou que não trabalha com uniformes, apenas moda casual.",
+            "Cliente veio de campanha perguntando sobre roupas de banho. Agente apresentou linha de praia e condições de atacado.",
+            "Lojista recorrente perguntou sobre previsão de chegada de nova coleção outono. Agente informou data prevista de lançamento.",
+            "Cliente perguntou sobre garantia dos produtos. Agente explicou política de garantia contra defeitos de fabricação.",
+            "Lojista novo perguntou sobre como receber os lançamentos em primeira mão. Agente convidou para o grupo exclusivo de lojistas."
+          ]
+        },
+        "sentimento": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": "positivo", "weight": 0.55 },
+            { "value": "neutro", "weight": 0.30 },
+            { "value": "negativo", "weight": 0.15 }
+          ]
+        },
+        "score_atendimento": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": 5, "weight": 0.40 },
+            { "value": 4, "weight": 0.30 },
+            { "value": 3, "weight": 0.15 },
+            { "value": 2, "weight": 0.10 },
+            { "value": 1, "weight": 0.05 }
+          ]
+        },
+        "tema_principal": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": "duvida_preco", "weight": 0.20 },
+            { "value": "duvida_produto", "weight": 0.20 },
+            { "value": "duvida_prazo_entrega", "weight": 0.15 },
+            { "value": "duvida_pagamento", "weight": 0.12 },
+            { "value": "interesse_compra", "weight": 0.15 },
+            { "value": "reclamacao_entrega", "weight": 0.08 },
+            { "value": "varejo_descartado", "weight": 0.05 },
+            { "value": "reclamacao_produto", "weight": 0.05 }
+          ]
+        },
+        "duvida_resolvida": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": true, "weight": 0.82 },
+            { "value": false, "weight": 0.18 }
+          ]
+        },
+        "interesse_compra": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": true, "weight": 0.45 },
+            { "value": false, "weight": 0.55 }
+          ]
+        },
+        "demanda_varejo": {
+          "_gen": "weightedOneOf",
+          "choices": [
+            { "value": true, "weight": 0.15 },
+            { "value": false, "weight": 0.85 }
+          ]
+        }
+      },
+      "localConfigs": { "maxEvents": 100 },
+      "fileConfigs": {
+        "format": "json",
+        "multiFile": null,
+        "filePrefix": "atendimentos"
+      }
+    }
+  ],
+  "connections": {
+    "pg": {
+      "kind": "postgres",
+      "connectionConfigs": {
+        "host": "postgres",
+        "port": 5432,
+        "db": "ninoagent",
+        "username": "ninoagent",
+        "password": "ninoagent"
+      },
+      "tablePolicy": "dropAndCreate"
+    },
+    "fs": {
+      "kind": "fileSystem"
+    }
+  },
+  "schedule": {
+    "stages": [
+      { "generators": ["clientes"] },
+      { "generators": ["atendimentos"] }
+    ]
+  }
+}

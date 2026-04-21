@@ -1,0 +1,57 @@
+name: ninoagent
+
+services:
+  postgres:
+    container_name: nino-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ninoagent
+      POSTGRES_USER: ninoagent
+      POSTGRES_PASSWORD: ninoagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - nino-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ninoagent"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    container_name: nino-qdrant
+    image: qdrant/qdrant:v1.13.3
+    ports:
+      - "6333:6333"
+    volumes:
+      - nino-qdrant-data:/qdrant/storage
+
+  redis:
+    container_name: nino-redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  evolution:
+    container_name: nino-evolution
+    image: atendai/evolution-api:v2.1.1
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_URL: http://localhost:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-ninoagent_key}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://ninoagent:ninoagent@nino-postgres:5432/evolution
+      CACHE_REDIS_ENABLED: "false"
+    volumes:
+      - nino-evolution-data:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  nino-postgres-data:
+  nino-qdrant-data:
+  nino-evolution-data:
