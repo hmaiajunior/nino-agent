@@ -48,9 +48,10 @@ def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "organico
     task_qualify = Task(
         description=(
             f"Primeira mensagem de {numero_whatsapp} (origem: {origem}): '{mensagem}'\n"
-            "1. Consulte se o número já é cliente cadastrado.\n"
-            "2. Envie UMA mensagem de boas-vindas e pergunte se é lojista ou consumidor final.\n"
-            "3. Salve o contexto com tipo_cliente, cliente_recorrente e origem."
+            "1. Use consultar_cliente para verificar se o número já está na base.\n"
+            "   - Se já for cliente: cumprimente pelo nome e salve o contexto com tipo_cliente, cliente_recorrente e origem.\n"
+            "   - Se for novo: envie UMA mensagem de boas-vindas e pergunte se é lojista ou consumidor final, depois salve o contexto.\n"
+            "2. Passe o contexto para o próximo agente."
         ),
         agent=qualification,
         expected_output="Contexto salvo no Redis com tipo_cliente identificado",
@@ -59,8 +60,7 @@ def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "organico
     task_wholesale = Task(
         description=(
             f"Com base na qualificação do cliente {numero_whatsapp}, inicie o atendimento.\n"
-            "Se atacado: responda à mensagem inicial de forma natural.\n"
-            "Se varejo: a qualificação já encerrou — não faça nada.\n"
+            "Responda à mensagem inicial de forma natural, seja atacado ou varejo.\n"
             "Ao final, chame registrar_conversa com numero_whatsapp, tipo_cliente, origem e status."
         ),
         agent=wholesale,

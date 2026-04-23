@@ -195,6 +195,62 @@ class BuscarTemasRecorrentesTool(BaseTool):
         return json.dumps(resultados, ensure_ascii=False)
 
 
+class EnviarCatalogTool(BaseTool):
+    name: str = "enviar_catalogo"
+    description: str = "Busca o PDF mais recente na pasta de catálogo do Google Drive e envia ao cliente via WhatsApp."
+    args_schema: Type[BaseModel] = NumeroSchema
+
+    def _run(self, numero_whatsapp: str) -> str:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+
+        creds = service_account.Credentials.from_service_account_file(
+            settings.GOOGLE_SA_CREDENTIALS_PATH,
+            scopes=["https://www.googleapis.com/auth/drive"],
+        )
+        drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+
+        results = drive.files().list(
+            q=f"'{settings.GOOGLE_DRIVE_CATALOG_FOLDER_ID}' in parents and mimeType='application/pdf' and trashed=false",
+            orderBy="modifiedTime desc",
+            pageSize=1,
+            fields="files(id, name)",
+        ).execute()
+
+        files = results.get("files", [])
+        if not files:
+            return "erro: nenhum PDF encontrado na pasta do catálogo"
+
+        file_id = files[0]["id"]
+        file_name = files[0]["name"]
+
+        # Torna o arquivo publicamente acessível via link
+        drive.permissions().create(
+            fileId=file_id,
+            body={"type": "anyone", "role": "reader"},
+        ).execute()
+
+        # URL direta de download
+        media_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+
+        url = f"{settings.EVOLUTION_API_URL}/message/sendMedia/{settings.EVOLUTION_INSTANCE}"
+        headers = {"apikey": settings.EVOLUTION_API_KEY, "Content-Type": "application/json"}
+        payload = {
+            "number": numero_whatsapp,
+            "mediatype": "document",
+            "mimetype": "application/pdf",
+            "caption": file_name,
+            "media": media_url,
+            "fileName": file_name,
+        }
+        try:
+            r = httpx.post(url, json=payload, headers=headers, timeout=30)
+            r.raise_for_status()
+            return "catalogo_enviado"
+        except Exception as e:
+            return f"erro_envio: {e}"
+
+
 # Instâncias prontas para uso
 consultar_cliente = ConsultarClienteTool()
 enviar_mensagem = EnviarMensagemTool()
@@ -204,3 +260,4 @@ registrar_conversa = RegistrarConversaTool()
 registrar_avaliacao = RegistrarAvaliacaoTool()
 buscar_avaliacoes_do_dia = BuscarAvaliacoesDiaTool()
 buscar_temas_recorrentes = BuscarTemasRecorrentesTool()
+enviar_catalogo = EnviarCatalogTool()

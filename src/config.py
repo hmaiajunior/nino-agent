@@ -33,6 +33,10 @@ class Settings:
     LANGFUSE_SECRET_KEY: str = os.getenv("LANGFUSE_SECRET_KEY", "")
     LANGFUSE_HOST: str = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
+    # Google Drive
+    GOOGLE_SA_CREDENTIALS_PATH: str = os.getenv("GOOGLE_SA_CREDENTIALS_PATH", "credentials/google-drive-sa.json")
+    GOOGLE_DRIVE_CATALOG_FOLDER_ID: str = os.getenv("GOOGLE_DRIVE_CATALOG_FOLDER_ID", "")
+
     # Negócio
     LOJA_NOME: str = os.getenv("LOJA_NOME", "")
     LOJA_WHATSAPP: str = os.getenv("LOJA_WHATSAPP", "")

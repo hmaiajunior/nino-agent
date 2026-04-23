@@ -7,3 +7,5 @@ __pycache__/
 .venv/
 relatorios/
 .files/
+credentials/
+test_catalogo.py
