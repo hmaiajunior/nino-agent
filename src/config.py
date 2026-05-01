@@ -14,6 +14,11 @@ class Settings:
     EVOLUTION_API_KEY: str = os.getenv("EVOLUTION_API_KEY", "")
     EVOLUTION_INSTANCE: str = os.getenv("EVOLUTION_INSTANCE", "ninoagent")
 
+    # WhatsApp — Meta API oficial
+    WHATSAPP_TOKEN: str = os.getenv("WHATSAPP_TOKEN", "")
+    WHATSAPP_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+    WHATSAPP_VERIFY_TOKEN: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
+
     # Postgres
     POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
     POSTGRES_PORT: int = int(os.getenv("POSTGRES_PORT", 5432))

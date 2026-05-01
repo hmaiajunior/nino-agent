@@ -1,4 +1,4 @@
-name: ninoagent
+version: "3.8"
 
 services:
   postgres:
@@ -33,25 +33,25 @@ services:
     ports:
       - "6379:6379"
 
-  evolution:
-    container_name: nino-evolution
-    image: atendai/evolution-api:v2.1.1
-    ports:
-      - "8081:8080"
-    environment:
-      SERVER_URL: http://localhost:8080
-      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-ninoagent_key}
-      DATABASE_ENABLED: "true"
-      DATABASE_PROVIDER: postgresql
-      DATABASE_CONNECTION_URI: postgresql://ninoagent:ninoagent@nino-postgres:5432/evolution
-      CACHE_REDIS_ENABLED: "false"
-    volumes:
-      - nino-evolution-data:/evolution/instances
-    depends_on:
-      postgres:
-        condition: service_healthy
+  # evolution: (substituído pela Meta API oficial)
+  #   container_name: nino-evolution
+  #   image: atendai/evolution-api:v2.1.1
+  #   ports:
+  #     - "8081:8080"
+  #   environment:
+  #     SERVER_URL: http://localhost:8080
+  #     AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-ninoagent_key}
+  #     DATABASE_ENABLED: "true"
+  #     DATABASE_PROVIDER: postgresql
+  #     DATABASE_CONNECTION_URI: postgresql://ninoagent:ninoagent@nino-postgres:5432/evolution
+  #     CACHE_REDIS_ENABLED: "false"
+  #   volumes:
+  #     - nino-evolution-data:/evolution/instances
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
 
 volumes:
   nino-postgres-data:
   nino-qdrant-data:
-  nino-evolution-data:
+  # nino-evolution-data:

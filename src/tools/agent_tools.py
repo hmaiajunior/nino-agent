@@ -62,17 +62,29 @@ class ConsultarClienteTool(BaseTool):
 
 class EnviarMensagemTool(BaseTool):
     name: str = "enviar_mensagem"
-    description: str = "Envia mensagem de texto via WhatsApp (Evolution API)."
+    description: str = "Envia mensagem de texto via WhatsApp (Meta API oficial)."
     args_schema: Type[BaseModel] = MensagemSchema
 
     def _run(self, numero: str, texto: str) -> str:
-        url = f"{settings.EVOLUTION_API_URL}/message/sendText/{settings.EVOLUTION_INSTANCE}"
-        headers = {"apikey": settings.EVOLUTION_API_KEY}
-        payload = {"number": numero, "text": texto}
+        to = numero if numero.startswith("+") else f"+{numero}"
+        texto = texto.encode("utf-8", errors="ignore").decode("utf-8")
+        url = f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        headers = {
+            "Authorization": f"Bearer {settings.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "text",
+            "text": {"body": texto},
+        }
         try:
             r = httpx.post(url, json=payload, headers=headers, timeout=10)
             r.raise_for_status()
             return "mensagem_enviada"
+        except httpx.HTTPStatusError as e:
+            return f"erro_envio: {e} | body: {e.response.text}"
         except Exception as e:
             return f"erro_envio: {e}"
 
@@ -224,24 +236,26 @@ class EnviarCatalogTool(BaseTool):
         file_id = files[0]["id"]
         file_name = files[0]["name"]
 
-        # Torna o arquivo publicamente acessível via link
         drive.permissions().create(
             fileId=file_id,
             body={"type": "anyone", "role": "reader"},
         ).execute()
 
-        # URL direta de download
         media_url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
-        url = f"{settings.EVOLUTION_API_URL}/message/sendMedia/{settings.EVOLUTION_INSTANCE}"
-        headers = {"apikey": settings.EVOLUTION_API_KEY, "Content-Type": "application/json"}
+        url = f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        headers = {
+            "Authorization": f"Bearer {settings.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json",
+        }
         payload = {
-            "number": numero_whatsapp,
-            "mediatype": "document",
-            "mimetype": "application/pdf",
-            "caption": file_name,
-            "media": media_url,
-            "fileName": file_name,
+            "messaging_product": "whatsapp",
+            "to": numero_whatsapp,
+            "type": "document",
+            "document": {
+                "link": media_url,
+                "filename": file_name,
+            },
         }
         try:
             r = httpx.post(url, json=payload, headers=headers, timeout=30)
