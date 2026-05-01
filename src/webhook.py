@@ -11,8 +11,11 @@ from src.config import settings
 from src.crew import run_atendimento
 from src.storage.store import buscar_sessao, salvar_sessao, salvar_conversa
 
+from src.monitor import router as monitor_router
+
 logger = logging.getLogger(__name__)
 app = FastAPI(title="NinoAgent Webhook")
+app.include_router(monitor_router, prefix="/monitor")
 
 _tasks: dict[str, asyncio.Task] = {}
 _DELAY = 30  # segundos

@@ -187,3 +187,34 @@ def buscar_sessao(numero: str) -> dict | None:
 
 def encerrar_sessao(numero: str) -> None:
     redis_conn().delete(f"session:{numero}")
+
+
+def listar_sessoes_ativas() -> list[dict]:
+    """Retorna todas as sessões Redis ativas (prefixo session:*)."""
+    r = redis_conn()
+    resultado = []
+    for key in r.keys("session:*"):
+        raw = r.get(key)
+        if raw:
+            dados = json.loads(raw)
+            numero = key.removeprefix("session:")
+            resultado.append({"numero": numero, **dados})
+    return resultado
+
+
+def buscar_conversas_recentes(dias: int = 7) -> list[dict]:
+    """Retorna conversas encerradas dos últimos N dias com nome do cliente."""
+    with pg_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.numero_whatsapp, cl.nome, c.tipo_cliente,
+                   c.iniciada_em, c.encerrada_em, c.status, c.origem
+            FROM conversas c
+            LEFT JOIN clientes cl ON cl.numero_whatsapp = c.numero_whatsapp
+            WHERE c.iniciada_em >= NOW() - INTERVAL '%s days'
+            ORDER BY c.iniciada_em DESC
+            """,
+            (dias,),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]

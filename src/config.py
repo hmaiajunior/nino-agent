@@ -50,6 +50,9 @@ class Settings:
     GOOGLE_SA_CREDENTIALS_PATH: str = os.getenv("GOOGLE_SA_CREDENTIALS_PATH", "credentials/google-drive-sa.json")
     GOOGLE_DRIVE_CATALOG_FOLDER_ID: str = os.getenv("GOOGLE_DRIVE_CATALOG_FOLDER_ID", "")
 
+    # Monitor
+    MONITOR_TOKEN: str = os.getenv("MONITOR_TOKEN", "")
+
     # Negócio
     LOJA_NOME: str = os.getenv("LOJA_NOME", "")
     LOJA_WHATSAPP: str = os.getenv("LOJA_WHATSAPP", "")
