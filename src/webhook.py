@@ -93,6 +93,9 @@ async def _processar(numero: str, origem: str):
 
     try:
         await run_atendimento(numero, mensagem_consolidada, origem)
+        # Garante conversa_id antes do sentiment — mesmo que o agente não tenha
+        # chamado registrar_conversa (ex.: falha de ferramenta ou primeira sessão).
+        _garantir_conversa_registrada(numero)
         await run_sentiment(numero)
     except Exception:
         logger.exception("Erro no atendimento de %s", numero)

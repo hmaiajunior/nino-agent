@@ -18,9 +18,10 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     sessao = buscar_sessao(numero_whatsapp)
 
     if not sessao:
-        # Nova sessão: qualifica (envia saudação + salva contexto no Redis)
+        # Nova sessão: qualification envia a saudação e salva o contexto.
+        # Retorna imediatamente — o wholesale só entra na segunda mensagem em diante.
         await run_qualification(numero_whatsapp, mensagem, origem)
-        sessao = buscar_sessao(numero_whatsapp) or {}
+        return "qualificado"
 
     tipo = sessao.get("tipo_cliente", "atacado")
 
