@@ -17,7 +17,7 @@ def _build_crew(agents, tasks):
     return Crew(agents=agents, tasks=tasks, process=Process.sequential, verbose=True)
 
 
-def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "organico") -> str:
+async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "organico") -> str:
     sessao = buscar_sessao(numero_whatsapp)
     wholesale = build_wholesale_agent()
     sentiment = build_sentiment_agent()
@@ -36,10 +36,10 @@ def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "organico
             agent=wholesale,
             expected_output="Resposta enviada e conversa registrada com conversa_id",
         )
-        result = _build_crew(
+        result = await _build_crew(
             [wholesale, sentiment],
             [task_wholesale, _build_sentiment_task(sentiment, numero_whatsapp, context_task=task_wholesale)],
-        ).kickoff()
+        ).kickoff_async()
         return result
 
     # Primeira mensagem
@@ -68,10 +68,10 @@ def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "organico
         context=[task_qualify],
     )
 
-    return _build_crew(
+    return await _build_crew(
         [qualification, wholesale, sentiment],
         [task_qualify, task_wholesale, _build_sentiment_task(sentiment, numero_whatsapp, context_task=task_wholesale)],
-    ).kickoff()
+    ).kickoff_async()
 
 
 def _build_sentiment_task(sentiment, numero_whatsapp: str, context_task: Task = None) -> Task:

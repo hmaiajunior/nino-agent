@@ -3,16 +3,18 @@ Webhook handler — recebe mensagens da API oficial da Meta (WhatsApp Business A
 Execute com: uvicorn src.webhook:app --host 0.0.0.0 --port 8002
 """
 
-import threading
+import asyncio
+import logging
 from fastapi import FastAPI, Request, Query
 from fastapi.responses import PlainTextResponse
 from src.config import settings
 from src.crew import run_atendimento
 from src.storage.store import buscar_sessao, salvar_sessao, salvar_conversa
 
+logger = logging.getLogger(__name__)
 app = FastAPI(title="NinoAgent Webhook")
 
-_timers: dict[str, threading.Timer] = {}
+_tasks: dict[str, asyncio.Task] = {}
 _DELAY = 30  # segundos
 
 
@@ -59,10 +61,14 @@ def _garantir_conversa_registrada(numero: str):
         )
 
 
-def _processar(numero: str, origem: str):
-    _timers.pop(numero, None)
+async def _processar(numero: str, origem: str):
+    try:
+        await asyncio.sleep(_DELAY)
+    except asyncio.CancelledError:
+        return  # nova mensagem chegou antes dos 30s, timer reiniciado
 
-    # Não processa se conversa está em modo humano
+    _tasks.pop(numero, None)
+
     sessao = buscar_sessao(numero) or {}
     if sessao.get("modo") == "humano":
         return
@@ -81,8 +87,12 @@ def _processar(numero: str, origem: str):
     sessao["ultimo_processado_idx"] = len(historico)
     salvar_sessao(numero, sessao)
 
-    run_atendimento(numero, mensagem_consolidada, origem)
-    _garantir_conversa_registrada(numero)
+    try:
+        await run_atendimento(numero, mensagem_consolidada, origem)
+    except Exception:
+        logger.exception("Erro no atendimento de %s", numero)
+    finally:
+        _garantir_conversa_registrada(numero)
 
 
 @app.get("/webhook/whatsapp")
@@ -124,12 +134,10 @@ async def whatsapp_webhook(request: Request):
 
     _acumular_historico(numero, "cliente", mensagem)
 
-    if numero in _timers:
-        _timers[numero].cancel()
+    if numero in _tasks:
+        _tasks[numero].cancel()
 
-    timer = threading.Timer(_DELAY, _processar, args=[numero, origem])
-    _timers[numero] = timer
-    timer.start()
+    _tasks[numero] = asyncio.create_task(_processar(numero, origem))
 
     return {"status": "aguardando"}
 
