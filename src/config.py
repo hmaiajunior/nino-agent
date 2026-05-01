@@ -5,9 +5,17 @@ load_dotenv()
 
 
 class Settings:
-    # LLM
+    # LLM — chaves de API
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+
+    # LLM — modelos (trocáveis via env var, sem alterar código)
+    # Qualification e Sentiment: tarefas simples → Groq Llama (barato e rápido)
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+    # WholesaleAgent e InsightAgent: atendimento e relatório → Sonnet via OpenRouter
+    WHOLESALE_MODEL: str = os.getenv("WHOLESALE_MODEL", "openrouter/anthropic/claude-sonnet-4-5")
+    INSIGHT_MODEL: str = os.getenv("INSIGHT_MODEL", "openrouter/anthropic/claude-sonnet-4-5")
 
     # WhatsApp
     EVOLUTION_API_URL: str = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")

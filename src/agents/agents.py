@@ -1,4 +1,4 @@
-"""Definição dos 4 agentes NinoAgent com CrewAI."""
+"""Definição dos agentes NinoAgent com CrewAI (WholesaleAgent e InsightAgent)."""
 
 import os
 from crewai import Agent
@@ -10,32 +10,14 @@ from src.tools.agent_tools import (
     salvar_contexto_sessao,
     buscar_contexto_sessao,
     registrar_conversa,
-    registrar_avaliacao,
     buscar_avaliacoes_do_dia,
     buscar_temas_recorrentes,
     enviar_catalogo,
 )
 
+os.environ["OPENROUTER_API_KEY"] = settings.OPENROUTER_API_KEY
+# Mantido como fallback para chamadas diretas à Anthropic fora do OpenRouter
 os.environ["ANTHROPIC_API_KEY"] = settings.ANTHROPIC_API_KEY
-
-
-def build_qualification_agent() -> Agent:
-    return Agent(
-        role="QualificationAgent",
-        goal="Identificar se o cliente é lojista ou consumidor final com o mínimo de mensagens",
-        backstory=(
-            "Você é a Ana da PlayBeKids, loja de moda masculina infantil (0-12 anos). "
-            "Responda de forma curta e natural, como uma pessoa real no WhatsApp. "
-            "AO RECEBER UMA MENSAGEM: primeiro use consultar_cliente para verificar se o número já está na base. "
-            "Se já for cliente: cumprimente pelo nome, salve o contexto com os dados existentes e passe para o próximo agente — NÃO pergunte se é lojista. "
-            "Se for novo: faça UMA pergunta direta para descobrir se é lojista (atacado) ou consumidor final (varejo), "
-            "depois salve o contexto com tipo_cliente, cliente_recorrente e origem."
-        ),
-        llm="anthropic/claude-haiku-4-5",
-        tools=[consultar_cliente, enviar_mensagem, salvar_contexto_sessao],
-        verbose=True,
-        max_iter=5,
-    )
 
 
 def build_wholesale_agent() -> Agent:
@@ -62,28 +44,10 @@ def build_wholesale_agent() -> Agent:
             "CATÁLOGO — se o cliente de atacado solicitar o catálogo, use enviar_catalogo com o numero_whatsapp do cliente.\n"
             "VAREJO — atenda normalmente, tire dúvidas sobre produtos, preços e disponibilidade."
         ),
-        llm="anthropic/claude-sonnet-4-5",
+        llm=settings.WHOLESALE_MODEL,
         tools=[consultar_cliente, buscar_contexto_sessao, enviar_mensagem, enviar_catalogo, salvar_contexto_sessao, registrar_conversa],
         verbose=True,
         max_iter=10,
-    )
-
-
-def build_sentiment_agent() -> Agent:
-    return Agent(
-        role="SentimentAgent",
-        goal="Analisar sentimento da conversa e registrar avaliação estruturada em JSON",
-        backstory=(
-            "Analista silencioso. Recupere a sessão do cliente para obter o conversa_id. "
-            "Use SEMPRE o campo 'conversa_id' da sessão — nunca use o número do WhatsApp como ID. "
-            "Classifique: sentimento (positivo/neutro/negativo), score 1-5, tema principal, "
-            "duvida_resolvida, interesse_compra, demanda_varejo. "
-            "Registre a avaliação com o conversa_id correto."
-        ),
-        llm="anthropic/claude-haiku-4-5",
-        tools=[buscar_contexto_sessao, registrar_avaliacao],
-        verbose=True,
-        max_iter=3,
     )
 
 
@@ -96,7 +60,7 @@ def build_insight_agent() -> Agent:
             "volume, sentimento, temas, adesão ao grupo, demanda varejo. "
             "Relatório objetivo em menos de 3 minutos de leitura."
         ),
-        llm="anthropic/claude-sonnet-4-5",
+        llm=settings.INSIGHT_MODEL,
         tools=[buscar_avaliacoes_do_dia, buscar_temas_recorrentes, enviar_mensagem],
         verbose=True,
         max_iter=5,
