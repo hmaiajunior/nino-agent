@@ -3,6 +3,7 @@
 import json
 import groq
 from src.config import settings
+from src.observability import new_trace
 from src.storage import store
 
 _client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
@@ -55,19 +56,33 @@ async def run_sentiment(numero_whatsapp: str) -> None:
     historico_texto = "\n".join(
         f"[{m['role'].upper()}] {m['text']}" for m in historico
     )
+    messages = [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": f"Histórico da conversa:\n\n{historico_texto}"},
+    ]
+
+    trace = new_trace("sentiment", user_id=numero_whatsapp, session_id=numero_whatsapp)
 
     completion = await _client.chat.completions.create(
         model=settings.GROQ_MODEL,
         max_tokens=400,
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": f"Histórico da conversa:\n\n{historico_texto}"},
-        ],
+        messages=messages,
         tools=[_TOOL],
         tool_choice={"type": "function", "function": {"name": "registrar_avaliacao"}},
     )
 
     dados = json.loads(completion.choices[0].message.tool_calls[0].function.arguments)
+
+    trace.generation(
+        name="classificar_sentimento",
+        model=settings.GROQ_MODEL,
+        input=messages,
+        output=dados,
+        usage={
+            "input": completion.usage.prompt_tokens,
+            "output": completion.usage.completion_tokens,
+        },
+    )
 
     store.salvar_avaliacao({
         "conversa_id": conversa_id,
