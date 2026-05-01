@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import PlainTextResponse
 from src.config import settings
 from src.crew import run_atendimento
+from src.sentiment import run_sentiment
 from src.storage.store import buscar_sessao, salvar_sessao, salvar_conversa
 
 from src.monitor import router as monitor_router
@@ -92,6 +93,7 @@ async def _processar(numero: str, origem: str):
 
     try:
         await run_atendimento(numero, mensagem_consolidada, origem)
+        await run_sentiment(numero)
     except Exception:
         logger.exception("Erro no atendimento de %s", numero)
     finally:

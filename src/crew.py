@@ -5,7 +5,6 @@ from crewai import Crew, Task, Process
 
 from src.agents.agents import build_wholesale_agent, build_insight_agent
 from src.qualification import run_qualification
-from src.sentiment import run_sentiment
 from src.storage.store import buscar_sessao
 
 
@@ -38,9 +37,7 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
         expected_output="Resposta enviada e conversa registrada com conversa_id",
     )
 
-    result = await _build_crew([wholesale], [task_wholesale]).kickoff_async()
-    await run_sentiment(numero_whatsapp)
-    return result
+    return await _build_crew([wholesale], [task_wholesale]).kickoff_async()
 
 
 def run_relatorio_diario(data: str | None = None) -> str:
