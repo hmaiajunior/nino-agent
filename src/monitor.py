@@ -2,12 +2,17 @@
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from src.config import settings
 from src.storage import store
+from src.whatsapp import enviar_whatsapp
 
 router = APIRouter(tags=["monitor"])
+
+
+class _EnvioBody(BaseModel):
+    texto: str
 
 
 # --- Auth ---
@@ -131,3 +136,22 @@ def devolver_conversa(numero: str, _=Depends(_token)):
     sessao.pop("modo", None)
     store.salvar_sessao(numero, sessao)
     return {"status": "devolvido", "numero": numero}
+
+
+@router.post("/conversas/{numero}/enviar")
+def enviar_mensagem_humano(numero: str, body: _EnvioBody, _=Depends(_token)):
+    """Envia mensagem manual via Meta API e registra no histórico Redis."""
+    sessao = store.buscar_sessao(numero)
+    if not sessao:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
+    if sessao.get("modo") != "humano":
+        raise HTTPException(status_code=409, detail="Conversa não está no modo humano")
+
+    enviar_whatsapp(numero, body.texto)
+
+    historico = sessao.get("historico", [])
+    historico.append({"role": "humano", "text": body.texto})
+    sessao["historico"] = historico
+    store.salvar_sessao(numero, sessao)
+
+    return {"status": "enviado"}

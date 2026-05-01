@@ -1,10 +1,10 @@
 """Qualificação de cliente — chamada direta ao Groq (Llama), sem CrewAI."""
 
 import json
-import httpx
 import groq
 from src.config import settings
 from src.storage import store
+from src.whatsapp import enviar_whatsapp
 
 _client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
 
@@ -61,7 +61,7 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
             "origem": origem,
         }
 
-    _enviar_whatsapp(numero_whatsapp, resposta)
+    enviar_whatsapp(numero_whatsapp, resposta)
     store.salvar_sessao(numero_whatsapp, contexto)
     return contexto
 
@@ -110,20 +110,3 @@ async def _saudacao_novo_cliente(mensagem: str) -> tuple[str, str | None]:
     return args["resposta"], (tipo_raw if tipo_raw != "indefinido" else None)
 
 
-def _enviar_whatsapp(numero: str, texto: str) -> None:
-    to = numero if numero.startswith("+") else f"+{numero}"
-    url = f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
-    httpx.post(
-        url,
-        json={
-            "messaging_product": "whatsapp",
-            "to": to,
-            "type": "text",
-            "text": {"body": texto},
-        },
-        headers={
-            "Authorization": f"Bearer {settings.WHATSAPP_TOKEN}",
-            "Content-Type": "application/json",
-        },
-        timeout=10,
-    )
