@@ -1,0 +1,131 @@
+# Melhorias Técnicas — NinoAgent
+
+## ✅ Prioridade 1 — Async no webhook
+**Implementado.** `threading.Timer` substituído por `asyncio.Task` com `asyncio.sleep`.
+`run_atendimento` virou `async def`; `kickoff()` → `await kickoff_async()`.
+Múltiplos atendimentos simultâneos rodam de forma concorrente sem bloquear o event loop.
+
+---
+
+## ✅ Prioridade 2 — Substituir CrewAI em Qualification e Sentiment
+**Implementado.** `src/qualification.py` e `src/sentiment.py` criados com chamadas
+diretas ao Groq (Llama). Qualification usa LLM apenas para gerar a saudação; Sentiment
+usa `tool_use` forçado para structured output em uma única chamada. Loop ReAct eliminado.
+
+---
+
+## ✅ Prioridade 3 — Refatorar backstory vs task description
+**Implementado.** Backstory do WholesaleAgent reduzido a 2 linhas (identidade + tom).
+Regras operacionais (comportamento, fluxo atacado/varejo/catálogo, encerramento com convite
+ao grupo) movidas para `task.description` em `crew.py`, onde são injetadas por execução.
+
+---
+
+## ✅ Prioridade 4 — OpenRouter para diversificar LLMs
+**Implementado.** WholesaleAgent e InsightAgent usam `openrouter/anthropic/claude-sonnet-4-5`
+via LiteLLM. Modelos configuráveis via env vars `WHOLESALE_MODEL` e `INSIGHT_MODEL`.
+
+---
+
+## ✅ Prioridade 5 — Modelos mais baratos para Qualification e Sentiment
+**Implementado.** Qualification e Sentiment usam `llama-3.1-8b-instant` via Groq SDK
+diretamente. Modelo configurável via env var `GROQ_MODEL`.
+
+---
+
+## ✅ Prioridade 6 — Implementar LangFuse (observabilidade)
+**Implementado.** `src/observability.py` criado com cliente singleton e classe `_Noop`
+para degradação graciosa quando as chaves não estão configuradas.
+- WholesaleAgent e InsightAgent (CrewAI/LiteLLM): `litellm.success_callback = ["langfuse"]`
+  ativado na importação de `observability` em `crew.py` — captura tokens, custo e latência.
+- Qualification e Sentiment (Groq SDK direto): `new_trace()` cria trace por conversa;
+  `.generation()` registra modelo, input, output e contagem de tokens após cada chamada.
+
+---
+
+## ✅ Prioridade 7 — Interface de monitoramento
+**Implementado.** `src/monitor.py` com router FastAPI montado em `/monitor/` (porta 8002).
+Endpoints: listar conversas, detalhar histórico, assumir, devolver, enviar mensagem manual.
+Frontend HTML/CSS/JS vanilla com polling de 5s. Protegido por `MONITOR_TOKEN`.
+
+---
+
+## ✅ Prioridade 8 — SentimentAgent após encerramento da conversa
+**Implementado.** `run_sentiment` removido de `run_atendimento` e movido para
+`_processar()` no webhook — roda uma única vez por conversa, com histórico completo,
+após o timer de 30s expirar.
+
+---
+
+## ✅ Review pós-implementação — Bugs corrigidos (2025-05-01)
+
+Três bugs identificados e corrigidos após review completo de todos os módulos:
+
+**Bug 1 — Dupla resposta no primeiro contato** (`crew.py`)
+- `run_atendimento` rodava qualification + wholesale para clientes novos, enviando
+  duas mensagens ao cliente. Corrigido: `return "qualificado"` logo após qualification;
+  o WholesaleAgent só entra a partir da segunda mensagem.
+
+**Bug 2 — `conversa_id` ausente no Sentiment** (`webhook.py`)
+- `run_sentiment` rodava antes de `_garantir_conversa_registrada`, fazendo o sentiment
+  ser silenciosamente ignorado quando o agente não chamava `registrar_conversa`.
+  Corrigido: `_garantir_conversa_registrada` chamado antes de `run_sentiment`.
+
+**Bug 3 — Sem tratamento de erro em `enviar_whatsapp`** (`whatsapp.py`)
+- Falhas de rede/HTTP na saudação de qualification quebravam o fluxo silenciosamente.
+  Corrigido: `try/except` com `logger.error` para erros HTTP e erros gerais.
+
+---
+
+## Prioridade 9 — Avaliar modelo mais barato para o WholesaleAgent
+
+**Implementado.** Trocado para `openrouter/google/gemini-2.5-flash` (~$0.15/M entrada, ~$0.60/M saída — ~20x mais barato que Sonnet). Configurado via `WHOLESALE_MODEL` no `.env`.
+
+---
+
+## Prioridade 10 — Bug: mensagens do agente não aparecem no monitor
+
+O monitor exibe apenas as mensagens do cliente. As respostas do agente não são salvas
+no histórico da sessão Redis, então o frontend não as encontra.
+
+**Causa provável:** `EnviarMensagemTool` e `enviar_whatsapp` enviam a mensagem via Meta
+API mas não chamam `_acumular_historico` com `role="agente"`. O histórico só registra
+o lado do cliente.
+
+**Correção:** após cada envio bem-sucedido, salvar a mensagem enviada no Redis:
+```python
+# Em EnviarMensagemTool._run() e em enviar_whatsapp()
+store.acumular_historico(numero, "agente", texto)
+```
+Ou centralizar: o webhook intercepta o envio e registra automaticamente.
+
+---
+
+## Prioridade 11 — Avaliar envio de áudio e vídeo pelo monitor (modo humano)
+
+Quando um humano assume a conversa pelo monitor, o campo de texto atual só permite
+enviar mensagens de texto. Avaliar suporte a áudio e vídeo.
+
+**Meta API suporta:**
+- `audio` — arquivo de áudio (mp3, ogg/opus)
+- `video` — arquivo de vídeo (mp4)
+- `document` — qualquer arquivo (pdf, etc.)
+
+**Implementação:** adicionar upload de arquivo no frontend do monitor; o backend recebe
+o arquivo, faz upload para a Meta API (`POST /{PHONE_NUMBER_ID}/media`) para obter o
+`media_id`, depois envia a mensagem com `type: audio|video` e o `media_id`.
+
+**Complexidade:** média — duas chamadas à Meta API (upload + envio) e mudança no
+frontend para aceitar seleção de arquivo além do campo de texto.
+
+---
+
+## Prioridade 12 — Testar WholesaleAgent com Llama 3.3 70B
+
+Avaliar `openrouter/meta-llama/llama-3.3-70b-instruct` como alternativa ao Gemini Flash.
+Custo similar (~$0.12/M entrada, ~$0.30/M saída) com potencial vantagem em português e
+aderência a instruções estruturadas.
+
+**Como testar:** `WHOLESALE_MODEL=openrouter/meta-llama/llama-3.3-70b-instruct` no `.env`.
+Avaliar os mesmos critérios da P9: respostas naturais em português, regras do backstory,
+uso correto das tools.
