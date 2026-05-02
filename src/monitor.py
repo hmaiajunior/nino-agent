@@ -1,9 +1,10 @@
 """Router de monitoramento — lista conversas e expõe ações de controle humano."""
 
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
+import httpx
 
 from src.config import settings
 from src.storage import store
@@ -75,6 +76,13 @@ _HTML = """<!DOCTYPE html>
   #input-texto { flex: 1; padding: 9px 14px; border: 1px solid #ddd; border-radius: 20px; font-size: 14px; outline: none; background: white; }
   #input-texto:focus { border-color: #075e54; }
   #btn-enviar { background: #075e54; color: white; border-radius: 20px; }
+  #btn-anexo { background: #e8e8e8; color: #555; border-radius: 50%; width: 36px; height: 36px; padding: 0; font-size: 17px; flex-shrink: 0; }
+  #btn-anexo:disabled { opacity: .5; }
+
+  /* Mídia nas bolhas */
+  .msg audio { width: 100%; max-width: 260px; margin-top: 4px; display: block; }
+  .msg video { max-width: 260px; border-radius: 6px; margin-top: 4px; display: block; }
+  .msg img   { max-width: 260px; border-radius: 6px; margin-top: 4px; display: block; }
 </style>
 </head>
 <body>
@@ -102,6 +110,9 @@ _HTML = """<!DOCTYPE html>
       </div>
       <div id="mensagens"></div>
       <div id="input-area">
+        <input id="file-input" type="file" accept="audio/*,video/*,image/*,application/pdf"
+               style="display:none" onchange="enviarMidia()">
+        <button id="btn-anexo" title="Enviar arquivo" onclick="document.getElementById('file-input').click()">📎</button>
         <input id="input-texto" type="text" placeholder="Digite sua resposta..."
                onkeydown="if(event.key==='Enter')enviar()">
         <button id="btn-enviar" onclick="enviar()">Enviar</button>
@@ -164,7 +175,18 @@ async function carregarConversa(numero) {
   msgs.innerHTML = conv.historico.map(m => {
     const cls   = m.role === 'cliente' ? 'msg-cliente' : m.role === 'humano' ? 'msg-humano' : 'msg-agente';
     const label = m.role === 'agente' ? '[AGENTE]' : m.role === 'humano' ? '[HUMANO]' : '';
-    return `<div class="msg ${cls}">${esc(m.text)}${label ? '<div class="msg-label">' + label + '</div>' : ''}</div>`;
+    const tipo  = m.type || 'text';
+    let conteudo;
+    if (tipo === 'audio') {
+      conteudo = `<audio controls src="/monitor/media/${esc(m.media_id)}?token=${TOKEN}"></audio><div class="msg-label">${esc(m.text)}</div>`;
+    } else if (tipo === 'video') {
+      conteudo = `<video controls src="/monitor/media/${esc(m.media_id)}?token=${TOKEN}"></video>`;
+    } else if (tipo === 'image') {
+      conteudo = `<img src="/monitor/media/${esc(m.media_id)}?token=${TOKEN}" alt="imagem">`;
+    } else {
+      conteudo = esc(m.text);
+    }
+    return `<div class="msg ${cls}">${conteudo}${(label && tipo === 'text') ? '<div class="msg-label">' + label + '</div>' : ''}</div>`;
   }).join('');
   msgs.scrollTop = msgs.scrollHeight;
 
@@ -197,6 +219,35 @@ async function enviar() {
   inp.value = '';
   await api('/conversas/' + sel + '/enviar', {method: 'POST', body: JSON.stringify({texto})});
   await carregarConversa(sel);
+}
+
+async function enviarMidia() {
+  if (!sel) return;
+  const input = document.getElementById('file-input');
+  const file = input.files[0];
+  if (!file) return;
+  const btn = document.getElementById('btn-anexo');
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const r = await fetch('/monitor/conversas/' + sel + '/enviar-midia?token=' + TOKEN, {
+      method: 'POST',
+      body: form,
+    });
+    if (r.ok) {
+      await carregarConversa(sel);
+    } else {
+      const err = await r.text();
+      console.error('Erro mídia:', err);
+      alert('Erro ao enviar arquivo.');
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📎';
+    input.value = '';
+  }
 }
 
 // Previne XSS nas strings injetadas no HTML
@@ -351,6 +402,99 @@ def devolver_conversa(numero: str, _=Depends(_token)):
     sessao.pop("modo", None)
     store.salvar_sessao(numero, sessao)
     return {"status": "devolvido", "numero": numero}
+
+
+@router.get("/media/{media_id}")
+def proxy_media(media_id: str, _=Depends(_token)):
+    """Faz proxy autenticado do arquivo de mídia da Meta API para o browser."""
+    headers = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
+    try:
+        meta = httpx.get(
+            f"https://graph.facebook.com/v19.0/{media_id}",
+            headers=headers,
+            timeout=10,
+        )
+        meta.raise_for_status()
+        data = meta.json()
+        url = data["url"]
+        mime_type = data.get("mime_type", "application/octet-stream")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha ao obter URL da mídia: {e}")
+
+    def _stream():
+        with httpx.stream("GET", url, headers=headers, timeout=60) as r:
+            r.raise_for_status()
+            for chunk in r.iter_bytes(chunk_size=8192):
+                yield chunk
+
+    return StreamingResponse(_stream(), media_type=mime_type)
+
+
+@router.post("/conversas/{numero}/enviar-midia")
+def enviar_midia_humano(numero: str, file: UploadFile = File(...), _=Depends(_token)):
+    """Faz upload de arquivo para a Meta API e envia ao cliente via WhatsApp."""
+    sessao = store.buscar_sessao(numero)
+    if not sessao:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
+    if sessao.get("modo") != "humano":
+        raise HTTPException(status_code=409, detail="Conversa não está no modo humano")
+
+    headers_auth = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
+    to = numero if numero.startswith("+") else f"+{numero}"
+    mime = file.content_type or "application/octet-stream"
+
+    # 1. Upload do arquivo para a Meta API
+    try:
+        upload_resp = httpx.post(
+            f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/media",
+            headers=headers_auth,
+            files={"file": (file.filename, file.file, mime)},
+            data={"messaging_product": "whatsapp"},
+            timeout=60,
+        )
+        upload_resp.raise_for_status()
+        media_id = upload_resp.json()["id"]
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha no upload para a Meta API: {e}")
+
+    # 2. Determina tipo e label para o histórico
+    if mime.startswith("audio/"):
+        msg_type, label = "audio", "[áudio enviado 🎵]"
+    elif mime.startswith("video/"):
+        msg_type, label = "video", "[vídeo enviado 🎬]"
+    elif mime.startswith("image/"):
+        msg_type, label = "image", "[imagem enviada 🖼️]"
+    else:
+        msg_type, label = "document", f"[arquivo: {file.filename or 'documento'}]"
+
+    media_obj = {"id": media_id}
+    if msg_type == "document":
+        media_obj["filename"] = file.filename or "arquivo"
+
+    # 3. Envia a mensagem WhatsApp
+    try:
+        send_resp = httpx.post(
+            f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages",
+            headers={**headers_auth, "Content-Type": "application/json"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": msg_type,
+                msg_type: media_obj,
+            },
+            timeout=30,
+        )
+        send_resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha ao enviar mídia: {e}")
+
+    # 4. Registra no histórico Redis
+    historico = sessao.get("historico", [])
+    historico.append({"role": "humano", "type": msg_type, "media_id": media_id, "text": label})
+    sessao["historico"] = historico
+    store.salvar_sessao(numero, sessao)
+
+    return {"status": "enviado", "type": msg_type, "media_id": media_id}
 
 
 @router.post("/conversas/{numero}/enviar")

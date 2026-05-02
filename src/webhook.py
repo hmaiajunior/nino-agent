@@ -117,11 +117,27 @@ async def verificar_webhook(
     return PlainTextResponse("Forbidden", status_code=403)
 
 
+def _normalizar_numero(numero: str) -> str:
+    if len(numero) == 12 and numero.startswith("55"):
+        return numero[:4] + "9" + numero[4:]
+    return numero
+
+
+def _assumir_automatico(numero: str) -> None:
+    """Coloca a sessão em modo humano e cancela o task pendente do agente."""
+    sessao = buscar_sessao(numero) or {}
+    if sessao.get("modo") != "humano":
+        sessao["modo"] = "humano"
+        salvar_sessao(numero, sessao)
+    if numero in _tasks:
+        _tasks[numero].cancel()
+        _tasks.pop(numero, None)
+
+
 @app.post("/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):
     payload = await request.json()
 
-    # Extrai mensagem do formato Meta
     try:
         entry = payload["entry"][0]
         changes = entry["changes"][0]["value"]
@@ -130,26 +146,43 @@ async def whatsapp_webhook(request: Request):
             return {"status": "ignored"}
 
         msg = messages[0]
-        if msg.get("type") != "text":
-            return {"status": "ignored"}
-
-        numero = msg["from"]
-        # Normaliza números brasileiros sem o nono dígito (ex: 5585XXXXXXXX → 55859XXXXXXXX)
-        if len(numero) == 12 and numero.startswith("55"):
-            numero = numero[:4] + "9" + numero[4:]
-        mensagem = msg["text"]["body"]
+        msg_type = msg.get("type")
+        numero = _normalizar_numero(msg["from"])
         origem = changes.get("contacts", [{}])[0].get("profile", {}).get("name", "organico")
     except (KeyError, IndexError):
         return {"status": "ignored"}
 
-    _acumular_historico(numero, "cliente", mensagem)
+    if msg_type == "text":
+        mensagem = msg["text"]["body"]
+        _acumular_historico(numero, "cliente", mensagem)
 
-    if numero in _tasks:
-        _tasks[numero].cancel()
+        if numero in _tasks:
+            _tasks[numero].cancel()
+        _tasks[numero] = asyncio.create_task(_processar(numero, origem))
+        return {"status": "aguardando"}
 
-    _tasks[numero] = asyncio.create_task(_processar(numero, origem))
+    if msg_type in ("audio", "video", "image", "document"):
+        # Extrai o media_id do campo específico do tipo
+        media_info = msg.get(msg_type, {})
+        media_id = media_info.get("id", "")
+        labels = {"audio": "[áudio 🎵]", "video": "[vídeo 🎬]", "image": "[imagem 🖼️]", "document": "[arquivo 📎]"}
+        texto_exibicao = labels.get(msg_type, f"[{msg_type}]")
 
-    return {"status": "aguardando"}
+        sessao = buscar_sessao(numero) or {}
+        historico = sessao.get("historico", [])
+        historico.append({"role": "cliente", "type": msg_type, "media_id": media_id, "text": texto_exibicao})
+        sessao["historico"] = historico
+        salvar_sessao(numero, sessao)
+
+        # Áudio → assume automaticamente (agente não processa áudio)
+        if msg_type == "audio":
+            _assumir_automatico(numero)
+            logger.info("Conversa %s assumida automaticamente por áudio recebido", numero)
+            return {"status": "assumido_automatico"}
+
+        return {"status": "midia_registrada"}
+
+    return {"status": "ignored"}
 
 
 @app.get("/health")
