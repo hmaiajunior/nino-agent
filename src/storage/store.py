@@ -11,34 +11,25 @@ from src.config import settings
 
 # --- Postgres ---
 
-from psycopg2 import pool as pg_pool
+from contextlib import contextmanager
 
-_pool = None
+_pg_kwargs = None
 
-def _get_pool():
-    global _pool
-    if _pool is None:
-        _pool = pg_pool.ThreadedConnectionPool(
-            minconn=2, maxconn=20,
+def _pg_connect():
+    global _pg_kwargs
+    if _pg_kwargs is None:
+        _pg_kwargs = dict(
             host=settings.POSTGRES_HOST,
             port=settings.POSTGRES_PORT,
             dbname=settings.POSTGRES_DB,
             user=settings.POSTGRES_USER,
             password=settings.POSTGRES_PASSWORD,
         )
-    return _pool
-
-def pg_conn():
-    return _get_pool().getconn()
-
-def pg_release(conn):
-    _get_pool().putconn(conn)
-
-from contextlib import contextmanager
+    return psycopg2.connect(**_pg_kwargs)
 
 @contextmanager
 def pg_cursor():
-    conn = _get_pool().getconn()
+    conn = _pg_connect()
     try:
         with conn.cursor() as cur:
             yield cur
@@ -47,7 +38,7 @@ def pg_cursor():
         conn.rollback()
         raise
     finally:
-        _get_pool().putconn(conn)
+        conn.close()
 
 
 def buscar_cliente(numero_whatsapp: str) -> dict | None:
@@ -313,7 +304,7 @@ def buscar_conversas_recentes(dias: int = 7) -> list[dict]:
                    c.iniciada_em, c.encerrada_em, c.status, c.origem
             FROM conversas c
             LEFT JOIN clientes cl ON cl.numero_whatsapp = c.numero_whatsapp
-            WHERE c.iniciada_em >= NOW() - INTERVAL '%s days'
+            WHERE c.iniciada_em >= NOW() - (INTERVAL '1 day' * %s)
             ORDER BY c.iniciada_em DESC
             """,
             (dias,),
