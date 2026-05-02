@@ -513,31 +513,36 @@ def devolver_conversa(numero: str, _=Depends(_token)):
     return {"status": "devolvido", "numero": numero}
 
 
+_media_cache: dict[str, tuple[bytes, str]] = {}  # media_id → (content, mime_type)
+
 @router.get("/media/{media_id}")
 def proxy_media(media_id: str, request: Request, _=Depends(_token)):
     """Proxy autenticado de mídia da Meta API com suporte a Range (necessário para <audio>/<video>)."""
     headers_auth = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
 
-    try:
-        meta = httpx.get(
-            f"https://graph.facebook.com/v19.0/{media_id}",
-            headers=headers_auth, timeout=10,
-        )
-        meta.raise_for_status()
-        data = meta.json()
-        url = data["url"]
-        mime_type = data.get("mime_type", "application/octet-stream")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Falha ao obter URL da mídia: {e}")
+    if media_id not in _media_cache:
+        try:
+            meta = httpx.get(
+                f"https://graph.facebook.com/v19.0/{media_id}",
+                headers=headers_auth, timeout=10,
+            )
+            meta.raise_for_status()
+            data = meta.json()
+            url = data["url"]
+            mime_type = data.get("mime_type", "application/octet-stream")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Falha ao obter URL da mídia: {e}")
 
-    try:
-        file_resp = httpx.get(url, headers=headers_auth, timeout=60)
-        file_resp.raise_for_status()
-        content = file_resp.content
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Falha ao baixar mídia: {e}")
+        try:
+            file_resp = httpx.get(url, headers=headers_auth, timeout=60)
+            file_resp.raise_for_status()
+            _media_cache[media_id] = (file_resp.content, mime_type)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Falha ao baixar mídia: {e}")
 
+    content, mime_type = _media_cache[media_id]
     total = len(content)
+
     range_header = request.headers.get("range")
     if range_header:
         try:
