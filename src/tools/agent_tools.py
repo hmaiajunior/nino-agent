@@ -82,6 +82,12 @@ class EnviarMensagemTool(BaseTool):
         try:
             r = httpx.post(url, json=payload, headers=headers, timeout=10)
             r.raise_for_status()
+            # Registra a mensagem do agente no histórico da sessão
+            sessao = store.buscar_sessao(numero) or {}
+            historico = sessao.get("historico", [])
+            historico.append({"role": "agente", "text": texto})
+            sessao["historico"] = historico
+            store.salvar_sessao(numero, sessao)
             return "mensagem_enviada"
         except httpx.HTTPStatusError as e:
             return f"erro_envio: {e} | body: {e.response.text}"
