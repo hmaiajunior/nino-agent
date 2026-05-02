@@ -6,6 +6,8 @@ Execute com: uvicorn src.webhook:app --host 0.0.0.0 --port 8002
 import asyncio
 import logging
 from fastapi import FastAPI, Request, Query
+
+logging.basicConfig(level=logging.INFO)
 from fastapi.responses import PlainTextResponse
 from src.config import settings
 from src.crew import run_atendimento

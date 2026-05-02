@@ -18,39 +18,58 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     sessao = buscar_sessao(numero_whatsapp)
 
     if not sessao:
-        # Nova sessão: qualification envia a saudação e salva o contexto.
-        # Retorna imediatamente — o wholesale só entra na segunda mensagem em diante.
         await run_qualification(numero_whatsapp, mensagem, origem)
         return "qualificado"
 
     tipo = sessao.get("tipo_cliente", "atacado")
+
+    # Histórico anterior (exceto as msgs novas que já vêm em `mensagem`)
+    historico = sessao.get("historico", [])
+    ultimo_idx = sessao.get("ultimo_processado_idx", 0)
+    msgs_anteriores = historico[:ultimo_idx] if ultimo_idx > 0 else []
+    contexto_historico = ""
+    if msgs_anteriores:
+        linhas = "\n".join(f"[{m['role'].upper()}] {m['text']}" for m in msgs_anteriores)
+        contexto_historico = f"\nHISTÓRICO ANTERIOR DA CONVERSA:\n{linhas}\n"
+
+    # Busca membro_grupo antecipadamente para não depender do agente chamar consultar_cliente
+    from src.storage.store import buscar_cliente
+    cliente = buscar_cliente(numero_whatsapp)
+    membro_grupo = cliente["membro_grupo"] if cliente else False
+    encerramento = (
+        f"Se membro_grupo=False: convide para https://chat.whatsapp.com/playbekids-lancamentos."
+        if not membro_grupo
+        else "Cliente já é membro do grupo — apenas agradeça o contato, sem convidar."
+    )
 
     wholesale = build_wholesale_agent()
     task_wholesale = Task(
         description=(
             f"Nova mensagem do cliente {numero_whatsapp}: '{mensagem}'\n"
             f"Contexto: tipo={tipo}, recorrente={sessao.get('cliente_recorrente', False)}, "
-            f"origem={sessao.get('origem', 'organico')}.\n"
-            "\nREGRAS DE COMPORTAMENTO:\n"
+            f"origem={sessao.get('origem', 'organico')}, membro_grupo={membro_grupo}."
+            f"{contexto_historico}\n"
+            "\nREGRAS DE RESPOSTA:\n"
             "- NÃO se apresente. NÃO pergunte se é lojista — já foi qualificado.\n"
             "- Responda APENAS o que foi perguntado. Nada a mais.\n"
             "- Máximo 2 linhas por mensagem, exceto ao enviar condições de atacado.\n"
             "- NÃO faça perguntas a não ser que seja estritamente necessário para responder.\n"
             "- NÃO liste produtos, condições ou informações extras sem o cliente pedir.\n"
-            "\nFLUXO POR TIPO DE CLIENTE:\n"
+            "\nCONTEÚDO DA RESPOSTA POR TIPO:\n"
             "ATACADO — quando o cliente confirmar interesse em atacado, envie EXATAMENTE este texto:\n"
             "\"Vou passar as informações atualizadas do nosso atacado. \n\n\n"
             " ▶️ Nosso atacado tem o pedido minimo de 7 conjuntos ou 15 peças;\n\n\n"
             " ▶️ Frete por conta do cliente;\n\n\n"
             " ▶️ Pagamento via pix, transferência ou link de cartao de crédito com acréscimo ;\n\n\n"
             " ▶️ Peças só são separadas após a confirmação do pagamento. Daí temos até 48h para o envio.\"\n"
-            "CATÁLOGO — se o cliente de atacado solicitar o catálogo, use enviar_catalogo com o numero_whatsapp do cliente.\n"
+            "CATÁLOGO — se o cliente solicitar catálogo, use enviar_catalogo com o numero_whatsapp do cliente.\n"
             "VAREJO — atenda normalmente, tire dúvidas sobre produtos, preços e disponibilidade.\n"
-            "\nENCERRAMENTO:\n"
-            "- Use consultar_cliente para verificar se o cliente já é membro do grupo.\n"
-            "  • Se membro_grupo=False: convide para o grupo (https://chat.whatsapp.com/playbekids-lancamentos).\n"
-            "  • Se membro_grupo=True: apenas agradeça o contato de forma simpática, sem convidar novamente.\n"
-            "- Ao final, chame registrar_conversa com numero_whatsapp, tipo_cliente, origem e status."
+            "\nPASSOS OBRIGATÓRIOS (execute nesta ordem):\n"
+            f"1. Chame enviar_mensagem para responder ao cliente.\n"
+            f"2. AO ENCERRAR a conversa (quando o cliente se despedir ou não houver mais dúvidas): "
+            f"envie uma mensagem de encerramento. {encerramento}\n"
+            f"3. Chame registrar_conversa com numero_whatsapp='{numero_whatsapp}', tipo_cliente='{tipo}', "
+            f"origem='{sessao.get('origem', 'organico')}' e status='resolvido'."
         ),
         agent=wholesale,
         expected_output="Resposta enviada e conversa registrada com conversa_id",
