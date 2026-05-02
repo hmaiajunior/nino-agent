@@ -70,6 +70,9 @@ _HTML = """<!DOCTYPE html>
   .msg-agente  { align-self: flex-start; background: #dcf8c6; border-radius: 8px 8px 8px 0; }
   .msg-humano  { align-self: flex-start; background: #fff3cd; border-radius: 8px 8px 8px 0; }
   .msg-label   { font-size: 10px; color: #888; margin-top: 3px; }
+  .msg-hora    { font-size: 10px; color: #999; margin-top: 2px; text-align: right; }
+  .data-sep    { align-self: center; margin: 12px 0 4px; }
+  .data-sep span { display: inline-block; background: rgba(255,255,255,.85); color: #555; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 10px; box-shadow: 0 1px 1px rgba(0,0,0,.05); }
 
   /* Input humano */
   #input-area { display: none; padding: 10px 16px; background: #f0f2f5; border-top: 1px solid #ddd; gap: 8px; align-items: center; }
@@ -83,6 +86,26 @@ _HTML = """<!DOCTYPE html>
   .msg audio { width: 100%; max-width: 260px; margin-top: 4px; display: block; }
   .msg video { max-width: 260px; border-radius: 6px; margin-top: 4px; display: block; }
   .msg img   { max-width: 260px; border-radius: 6px; margin-top: 4px; display: block; }
+
+  /* Mobile — padrão lista → detalhe */
+  @media (max-width: 600px) {
+    #sidebar { width: 100%; min-width: 0; border-right: none; }
+    #chat { display: none; position: fixed; inset: 0; z-index: 10; background: #e5ddd5; }
+    #chat.mobile-aberto { display: flex; }
+    #btn-voltar { display: flex; }
+    .msg { max-width: 85%; }
+    .msg audio, .msg video, .msg img { max-width: 100%; }
+  }
+  #btn-voltar { display: none; background: none; color: #075e54; font-size: 20px; padding: 0 8px 0 0; }
+
+  /* Métricas */
+  #metricas { display: flex; gap: 8px; padding: 10px 12px; background: white; border-bottom: 1px solid #e0e0e0; flex-wrap: wrap; }
+  .metric { flex: 1; min-width: 70px; background: #f7f8fa; border-radius: 8px; padding: 8px 10px; text-align: center; }
+  .metric-valor { font-size: 18px; font-weight: 700; color: #075e54; line-height: 1.1; }
+  .metric-label { font-size: 10px; color: #667; margin-top: 3px; text-transform: uppercase; letter-spacing: .3px; }
+  .metric-pos { color: #25d366; }
+  .metric-neg { color: #e53935; }
+  .metric-warn { color: #ff9800; }
 </style>
 </head>
 <body>
@@ -91,6 +114,7 @@ _HTML = """<!DOCTYPE html>
   <!-- Sidebar -->
   <div id="sidebar">
     <div id="sidebar-header">💬 NinoAgent Monitor</div>
+    <div id="metricas"><div style="padding:6px;color:#aaa;font-size:11px">…</div></div>
     <div id="conversa-lista"><div style="padding:16px;color:#aaa;font-size:13px">Carregando...</div></div>
   </div>
 
@@ -99,6 +123,7 @@ _HTML = """<!DOCTYPE html>
     <div id="empty-state">← Selecione uma conversa</div>
     <div id="chat-content">
       <div id="chat-header">
+        <button id="btn-voltar" onclick="voltarLista()" title="Voltar">‹</button>
         <div id="chat-info">
           <div id="chat-nome"></div>
           <div id="chat-status"></div>
@@ -172,10 +197,26 @@ async function carregarConversa(numero) {
   document.getElementById('input-area').style.display   = humano ? 'flex' : 'none';
 
   const msgs = document.getElementById('mensagens');
+  // Mantém posição do scroll se o usuário não está no fim (evita "pular" durante leitura)
+  const noFim = msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 50;
+
+  let ultimaData = null;
   msgs.innerHTML = conv.historico.map(m => {
     const cls   = m.role === 'cliente' ? 'msg-cliente' : m.role === 'humano' ? 'msg-humano' : 'msg-agente';
     const label = m.role === 'agente' ? '[AGENTE]' : m.role === 'humano' ? '[HUMANO]' : '';
     const tipo  = m.type || 'text';
+
+    // Separador de data entre conversas distintas
+    let separador = '';
+    if (m.timestamp) {
+      const d = new Date(m.timestamp);
+      const dataStr = d.toLocaleDateString('pt-BR', {day: '2-digit', month: 'short', year: 'numeric'});
+      if (dataStr !== ultimaData) {
+        separador = `<div class="data-sep"><span>${dataStr}</span></div>`;
+        ultimaData = dataStr;
+      }
+    }
+
     let conteudo;
     if (tipo === 'audio') {
       conteudo = `<audio controls src="/monitor/media/${esc(m.media_id)}?token=${TOKEN}"></audio><div class="msg-label">${esc(m.text)}</div>`;
@@ -186,9 +227,15 @@ async function carregarConversa(numero) {
     } else {
       conteudo = esc(m.text);
     }
-    return `<div class="msg ${cls}">${conteudo}${(label && tipo === 'text') ? '<div class="msg-label">' + label + '</div>' : ''}</div>`;
+
+    const hora = m.timestamp
+      ? `<div class="msg-hora">${new Date(m.timestamp).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</div>`
+      : '';
+
+    return `${separador}<div class="msg ${cls}">${conteudo}${(label && tipo === 'text') ? '<div class="msg-label">' + label + '</div>' : ''}${hora}</div>`;
   }).join('');
-  msgs.scrollTop = msgs.scrollHeight;
+
+  if (noFim) msgs.scrollTop = msgs.scrollHeight;
 
   document.getElementById('empty-state').style.display  = 'none';
   document.getElementById('chat-content').style.display = 'flex';
@@ -197,6 +244,12 @@ async function carregarConversa(numero) {
 async function selecionar(numero) {
   sel = numero;
   await Promise.all([carregarLista(), carregarConversa(numero)]);
+  document.getElementById('chat').classList.add('mobile-aberto');
+}
+
+function voltarLista() {
+  document.getElementById('chat').classList.remove('mobile-aberto');
+  sel = null;
 }
 
 async function assumir() {
@@ -250,6 +303,26 @@ async function enviarMidia() {
   }
 }
 
+async function carregarMetricas() {
+  const m = await api('/metricas');
+  if (!m) return;
+  const h = m.hoje, a = m.agora;
+  const score = h.score_medio !== null ? h.score_medio.toFixed(1) : '—';
+  const dur   = h.duracao_media_seg ? Math.round(h.duracao_media_seg / 60) + 'min' : '—';
+  const escPct = h.total_conversas ? Math.round(100 * h.escaladas_humano / h.total_conversas) + '%' : '—';
+  const scoreCls = h.score_medio === null ? '' : h.score_medio >= 4 ? 'metric-pos' : h.score_medio < 3 ? 'metric-neg' : 'metric-warn';
+
+  document.getElementById('metricas').innerHTML = `
+    <div class="metric"><div class="metric-valor">${h.total_conversas}</div><div class="metric-label">Hoje</div></div>
+    <div class="metric"><div class="metric-valor ${scoreCls}">${score}</div><div class="metric-label">Score</div></div>
+    <div class="metric"><div class="metric-valor metric-pos">${h.positivo}</div><div class="metric-label">😊</div></div>
+    <div class="metric"><div class="metric-valor metric-neg">${h.negativo}</div><div class="metric-label">😟</div></div>
+    <div class="metric"><div class="metric-valor metric-warn">${escPct}</div><div class="metric-label">Humano</div></div>
+    <div class="metric"><div class="metric-valor">${dur}</div><div class="metric-label">Duração</div></div>
+    <div class="metric"><div class="metric-valor">${a.ativas}</div><div class="metric-label">Em curso</div></div>
+  `;
+}
+
 // Previne XSS nas strings injetadas no HTML
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -257,8 +330,9 @@ function esc(s) {
 
 // Boot + polling 5s
 carregarLista();
+carregarMetricas();
 setInterval(async () => {
-  await carregarLista();
+  await Promise.all([carregarLista(), carregarMetricas()]);
   if (sel) await carregarConversa(sel);
 }, 5000);
 </script>
@@ -307,78 +381,113 @@ def _preview(historico: list[dict]) -> str:
 
 # --- Endpoints ---
 
+@router.get("/metricas")
+def metricas(_=Depends(_token)):
+    """Métricas agregadas: conversas/avaliações de hoje + estado atual em Redis."""
+    from datetime import date
+    hoje = str(date.today())
+    dia = store.metricas_dia(hoje)
+
+    ativas = store.listar_sessoes_ativas()
+    em_humano = sum(1 for s in ativas if s.get("modo") == "humano")
+
+    return {
+        "hoje": dia,
+        "agora": {
+            "ativas": len(ativas),
+            "em_humano": em_humano,
+            "com_agente": len(ativas) - em_humano,
+        },
+    }
+
+
 @router.get("/conversas")
 def listar_conversas(_=Depends(_token)):
-    """Lista conversas ativas (Redis) + encerradas (Postgres), sem duplicatas."""
-    ativas = store.listar_sessoes_ativas()
-    encerradas = store.buscar_conversas_recentes(dias=7)
-
-    numeros_ativos = {s["numero"] for s in ativas}
+    """Lista contatos com atividade nos últimos 30 dias (uma entrada por número)."""
+    ativas = {s["numero"]: s for s in store.listar_sessoes_ativas()}
+    contatos = store.listar_contatos(dias=30)
 
     resultado: list[dict] = []
+    vistos: set[str] = set()
 
-    for sessao in ativas:
-        historico = sessao.get("historico", [])
+    for c in contatos:
+        numero = c["numero_whatsapp"]
+        vistos.add(numero)
+        sessao = ativas.get(numero)
+        ultima = c.get("ultima_atividade")
         resultado.append({
-            "numero": sessao["numero"],
-            "nome": None,  # Redis não armazena nome; será enriquecido pelo frontend se necessário
+            "numero": numero,
+            "nome": c.get("nome"),
+            "status": "ativa" if sessao else "encerrada",
+            "modo": (sessao or {}).get("modo", "agente"),
+            "tipo_cliente": c.get("tipo_cliente") or (sessao or {}).get("tipo_cliente"),
+            "ultima_mensagem": (c.get("ultima_mensagem") or "")[:60],
+            "ultima_atividade": ultima.isoformat() if ultima else None,
+        })
+
+    # Sessões Redis sem nenhuma mensagem persistida (raro — janela curta entre acumular e persistir)
+    for numero, sessao in ativas.items():
+        if numero in vistos:
+            continue
+        hist = sessao.get("historico", [])
+        resultado.append({
+            "numero": numero,
+            "nome": None,
             "status": "ativa",
             "modo": sessao.get("modo", "agente"),
             "tipo_cliente": sessao.get("tipo_cliente"),
-            "ultima_mensagem": _preview(historico),
-            "ultima_atividade": _ultima_atividade(historico),
+            "ultima_mensagem": _preview(hist),
+            "ultima_atividade": _ultima_atividade(hist),
         })
 
-    for conv in encerradas:
-        numero = conv["numero_whatsapp"]
-        if numero in numeros_ativos:
-            continue  # já incluída como ativa
-        encerrada_em = conv.get("encerrada_em")
-        resultado.append({
-            "numero": numero,
-            "nome": conv.get("nome"),
-            "status": "encerrada",
-            "modo": "agente",
-            "tipo_cliente": conv.get("tipo_cliente"),
-            "ultima_mensagem": "",
-            "ultima_atividade": encerrada_em.isoformat() if encerrada_em else None,
-        })
-
-    # Ordena por ultima_atividade decrescente (None vai para o final)
     resultado.sort(key=lambda c: c["ultima_atividade"] or "", reverse=True)
     return resultado
 
 
 @router.get("/conversas/{numero}")
 def detalhar_conversa(numero: str, _=Depends(_token)):
-    """Retorna histórico completo de uma conversa (Redis se ativa, Postgres se encerrada)."""
+    """Timeline completa de um contato: Postgres (persistido) + Redis (mensagens recém-recebidas)."""
     sessao = store.buscar_sessao(numero)
+    cliente = store.buscar_cliente(numero)
 
-    if sessao:
-        cliente = store.buscar_cliente(numero)
-        return {
-            "numero": numero,
-            "nome": cliente["nome"] if cliente else None,
-            "status": "ativa",
-            "modo": sessao.get("modo", "agente"),
-            "tipo_cliente": sessao.get("tipo_cliente"),
-            "historico": sessao.get("historico", []),
+    # 1. Histórico persistido (timeline contínua, todas as conversas anteriores)
+    persistidas = store.buscar_mensagens(numero, limite=500)
+    historico = [
+        {
+            "role": m["role"],
+            "type": m.get("type") or "text",
+            "text": m.get("text") or "",
+            "media_id": m.get("media_id"),
+            "timestamp": m["criado_em"].isoformat() if m.get("criado_em") else None,
         }
+        for m in persistidas
+    ]
 
-    # Sem sessão ativa — busca a conversa mais recente no Postgres
-    encerradas = store.buscar_conversas_recentes(dias=30)
-    conv = next((c for c in encerradas if c["numero_whatsapp"] == numero), None)
-    if not conv:
-        raise HTTPException(status_code=404, detail="Conversa não encontrada")
+    # 2. Mensagens da sessão ativa que ainda não foram persistidas (defesa contra race)
+    if sessao:
+        textos_persistidos = {(m["role"], m["text"]) for m in persistidas[-20:]}
+        for m in sessao.get("historico", []):
+            chave = (m["role"], m.get("text", ""))
+            if chave in textos_persistidos:
+                continue
+            historico.append({
+                "role": m["role"],
+                "type": m.get("type") or "text",
+                "text": m.get("text") or "",
+                "media_id": m.get("media_id"),
+                "timestamp": None,
+            })
+
+    if not historico and not sessao:
+        raise HTTPException(status_code=404, detail="Contato sem histórico")
 
     return {
         "numero": numero,
-        "nome": conv.get("nome"),
-        "status": "encerrada",
-        "modo": "agente",
-        "tipo_cliente": conv.get("tipo_cliente"),
-        # Histórico não é persistido no Postgres por enquanto; retorna vazio
-        "historico": [],
+        "nome": cliente["nome"] if cliente else None,
+        "status": "ativa" if sessao else "encerrada",
+        "modo": (sessao or {}).get("modo", "agente"),
+        "tipo_cliente": (sessao or {}).get("tipo_cliente") or (cliente or {}).get("tipo"),
+        "historico": historico,
     }
 
 
@@ -512,11 +621,12 @@ def enviar_midia_humano(numero: str, file: UploadFile = File(...), _=Depends(_to
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Falha ao enviar mídia: {e}")
 
-    # 4. Registra no histórico Redis
+    # 4. Registra no histórico Redis e na timeline persistente
     historico = sessao.get("historico", [])
     historico.append({"role": "humano", "type": msg_type, "media_id": media_id, "text": label})
     sessao["historico"] = historico
     store.salvar_sessao(numero, sessao)
+    store.salvar_mensagem(numero, "humano", text=label, type=msg_type, media_id=media_id)
 
     return {"status": "enviado", "type": msg_type, "media_id": media_id}
 
@@ -536,5 +646,6 @@ def enviar_mensagem_humano(numero: str, body: _EnvioBody, _=Depends(_token)):
     historico.append({"role": "humano", "text": body.texto})
     sessao["historico"] = historico
     store.salvar_sessao(numero, sessao)
+    store.salvar_mensagem(numero, "humano", text=body.texto, type="text")
 
     return {"status": "enviado"}

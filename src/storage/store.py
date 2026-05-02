@@ -104,6 +104,58 @@ def salvar_avaliacao(dados: dict) -> None:
         )
 
 
+def salvar_mensagem(numero: str, role: str, text: str | None = None,
+                    type: str = "text", media_id: str | None = None,
+                    conversa_id: int | None = None) -> None:
+    """Persiste uma mensagem individual no Postgres (timeline contínua por contato)."""
+    with pg_cursor() as cur:
+        cur.execute(
+            """INSERT INTO mensagens (numero_whatsapp, conversa_id, role, type, text, media_id)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (numero, conversa_id, role, type, text, media_id),
+        )
+
+
+def buscar_mensagens(numero: str, limite: int = 500) -> list[dict]:
+    """Retorna o histórico ordenado cronologicamente de um número."""
+    with pg_cursor() as cur:
+        cur.execute(
+            """SELECT id, role, type, text, media_id, criado_em, conversa_id
+               FROM mensagens
+               WHERE numero_whatsapp = %s
+               ORDER BY criado_em ASC, id ASC
+               LIMIT %s""",
+            (numero, limite),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def listar_contatos(dias: int = 30) -> list[dict]:
+    """Lista contatos com atividade recente, com a última mensagem como preview."""
+    with pg_cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                m.numero_whatsapp,
+                cl.nome,
+                MAX(m.criado_em)                                       AS ultima_atividade,
+                (ARRAY_AGG(m.text       ORDER BY m.criado_em DESC))[1] AS ultima_mensagem,
+                (ARRAY_AGG(m.type       ORDER BY m.criado_em DESC))[1] AS ultimo_tipo,
+                MAX(c.tipo_cliente)                                    AS tipo_cliente
+            FROM mensagens m
+            LEFT JOIN clientes  cl ON cl.numero_whatsapp = m.numero_whatsapp
+            LEFT JOIN conversas c  ON c.id              = m.conversa_id
+            WHERE m.criado_em >= NOW() - (INTERVAL '1 day' * %s)
+            GROUP BY m.numero_whatsapp, cl.nome
+            ORDER BY ultima_atividade DESC
+            """,
+            (dias,),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
 def buscar_avaliacoes_dia(data: str) -> list[dict]:
     with pg_cursor() as cur:
         cur.execute(
@@ -200,6 +252,56 @@ def listar_sessoes_ativas() -> list[dict]:
             numero = key.removeprefix("session:")
             resultado.append({"numero": numero, **dados})
     return resultado
+
+
+def metricas_dia(data: str) -> dict:
+    """Retorna métricas agregadas de conversas e avaliações do dia."""
+    with pg_cursor() as cur:
+        # Conversas iniciadas no dia
+        cur.execute(
+            """SELECT
+                 COUNT(*)                                                   AS total,
+                 COUNT(*) FILTER (WHERE escalou_humano = TRUE)              AS escaladas,
+                 COUNT(*) FILTER (WHERE aceitou_grupo  = TRUE)              AS aderiram_grupo,
+                 ROUND(AVG(NULLIF(duracao_segundos, 0))::numeric, 0)        AS duracao_media_seg
+               FROM conversas
+               WHERE DATE(iniciada_em) = %s""",
+            (data,),
+        )
+        row = cur.fetchone()
+        total          = row[0] or 0
+        escaladas      = row[1] or 0
+        aderiram_grupo = row[2] or 0
+        duracao_media  = int(row[3]) if row[3] is not None else 0
+
+        # Avaliações do dia
+        cur.execute(
+            """SELECT
+                 ROUND(AVG(score_atendimento)::numeric, 2) AS score_medio,
+                 COUNT(*) FILTER (WHERE sentimento = 'positivo') AS positivo,
+                 COUNT(*) FILTER (WHERE sentimento = 'neutro')   AS neutro,
+                 COUNT(*) FILTER (WHERE sentimento = 'negativo') AS negativo,
+                 COUNT(*) FILTER (WHERE duvida_resolvida = TRUE) AS resolvidas,
+                 COUNT(*) AS avaliadas
+               FROM avaliacoes
+               WHERE DATE(criado_em) = %s""",
+            (data,),
+        )
+        a = cur.fetchone()
+        score_medio = float(a[0]) if a[0] is not None else None
+
+    return {
+        "total_conversas":   total,
+        "escaladas_humano":  escaladas,
+        "aderiram_grupo":    aderiram_grupo,
+        "duracao_media_seg": duracao_media,
+        "score_medio":       score_medio,
+        "positivo":          a[1] or 0,
+        "neutro":            a[2] or 0,
+        "negativo":          a[3] or 0,
+        "duvida_resolvida":  a[4] or 0,
+        "avaliadas":         a[5] or 0,
+    }
 
 
 def buscar_conversas_recentes(dias: int = 7) -> list[dict]:

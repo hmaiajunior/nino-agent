@@ -12,7 +12,7 @@ from fastapi.responses import PlainTextResponse
 from src.config import settings
 from src.crew import run_atendimento
 from src.sentiment import run_sentiment
-from src.storage.store import buscar_sessao, salvar_sessao, salvar_conversa
+from src.storage.store import buscar_sessao, salvar_sessao, salvar_conversa, salvar_mensagem
 
 from src.monitor import router as monitor_router
 
@@ -155,6 +155,7 @@ async def whatsapp_webhook(request: Request):
     if msg_type == "text":
         mensagem = msg["text"]["body"]
         _acumular_historico(numero, "cliente", mensagem)
+        salvar_mensagem(numero, "cliente", text=mensagem, type="text")
 
         if numero in _tasks:
             _tasks[numero].cancel()
@@ -173,6 +174,7 @@ async def whatsapp_webhook(request: Request):
         historico.append({"role": "cliente", "type": msg_type, "media_id": media_id, "text": texto_exibicao})
         sessao["historico"] = historico
         salvar_sessao(numero, sessao)
+        salvar_mensagem(numero, "cliente", text=texto_exibicao, type=msg_type, media_id=media_id)
 
         # Áudio → assume automaticamente (agente não processa áudio)
         if msg_type == "audio":

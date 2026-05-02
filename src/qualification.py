@@ -67,6 +67,7 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
     enviar_whatsapp(numero_whatsapp, resposta)
     historico = [{"role": "agente", "text": resposta}]
     store.salvar_sessao(numero_whatsapp, {**contexto, "historico": historico})
+    store.salvar_mensagem(numero_whatsapp, "agente", text=resposta, type="text")
     return contexto
 
 
