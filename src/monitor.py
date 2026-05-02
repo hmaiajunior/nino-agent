@@ -28,9 +28,12 @@ _HTML = """<!DOCTYPE html>
   #app { display: flex; height: 100vh; overflow: hidden; }
 
   /* Sidebar */
-  #sidebar { width: 320px; min-width: 320px; background: white; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; }
+  #sidebar { width: 320px; min-width: 320px; background: white; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
   #sidebar-header { padding: 14px 16px; background: #075e54; color: white; font-size: 16px; font-weight: 600; letter-spacing: .3px; }
-  #conversa-lista { flex: 1; overflow-y: auto; }
+  #conversa-lista { flex: 1 1 0; overflow-y: auto; min-height: 0; }
+  #conversa-lista::-webkit-scrollbar { width: 8px; }
+  #conversa-lista::-webkit-scrollbar-thumb { background: #c4c4c4; border-radius: 4px; }
+  #conversa-lista::-webkit-scrollbar-thumb:hover { background: #a0a0a0; }
   .conv-item { padding: 12px 16px; border-bottom: 1px solid #f0f0f0; cursor: pointer; transition: background .15s; }
   .conv-item:hover { background: #f5f5f5; }
   .conv-item.selected { background: #ebebeb; }
@@ -45,9 +48,9 @@ _HTML = """<!DOCTYPE html>
   .b-humano   { font-size: 10px; background: #ff9800; color: white; padding: 1px 6px; border-radius: 10px; font-weight: 600; }
 
   /* Painel de chat */
-  #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100vh; overflow: hidden; }
   #empty-state { flex: 1; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 15px; }
-  #chat-content { flex: 1; display: none; flex-direction: column; }
+  #chat-content { flex: 1 1 0; display: none; flex-direction: column; min-height: 0; overflow: hidden; }
 
   /* Cabeçalho do chat */
   #chat-header { padding: 12px 16px; background: #f0f2f5; border-bottom: 1px solid #ddd; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -64,7 +67,10 @@ _HTML = """<!DOCTYPE html>
   #btn-devolver { background: #4caf50; color: white; }
 
   /* Área de mensagens */
-  #mensagens { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 6px; background: #e5ddd5; }
+  #mensagens { flex: 1 1 0; overflow-y: auto; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 6px; background: #e5ddd5; }
+  #mensagens::-webkit-scrollbar { width: 8px; }
+  #mensagens::-webkit-scrollbar-thumb { background: #b8b0a8; border-radius: 4px; }
+  #mensagens::-webkit-scrollbar-thumb:hover { background: #948a80; }
   .msg { max-width: 68%; padding: 8px 12px; border-radius: 8px; font-size: 14px; line-height: 1.45; word-wrap: break-word; }
   .msg-cliente { align-self: flex-end; background: white; border-radius: 8px 8px 0 8px; }
   .msg-agente  { align-self: flex-start; background: #dcf8c6; border-radius: 8px 8px 8px 0; }
@@ -99,7 +105,7 @@ _HTML = """<!DOCTYPE html>
   #btn-voltar { display: none; background: none; color: #075e54; font-size: 20px; padding: 0 8px 0 0; }
 
   /* Métricas */
-  #metricas { display: flex; gap: 8px; padding: 10px 12px; background: white; border-bottom: 1px solid #e0e0e0; flex-wrap: wrap; }
+  #metricas { display: flex; gap: 8px; padding: 10px 12px; background: white; border-bottom: 1px solid #e0e0e0; flex-wrap: wrap; flex-shrink: 0; }
   .metric { flex: 1; min-width: 70px; background: #f7f8fa; border-radius: 8px; padding: 8px 10px; text-align: center; }
   .metric-valor { font-size: 18px; font-weight: 700; color: #075e54; line-height: 1.1; }
   .metric-label { font-size: 10px; color: #667; margin-top: 3px; text-transform: uppercase; letter-spacing: .3px; }
@@ -182,7 +188,7 @@ async function carregarLista() {
   }).join('');
 }
 
-async function carregarConversa(numero) {
+async function carregarConversa(numero, forcarFim = false) {
   const conv = await api('/conversas/' + numero);
   if (!conv) return;
 
@@ -198,7 +204,9 @@ async function carregarConversa(numero) {
 
   const msgs = document.getElementById('mensagens');
   // Mantém posição do scroll se o usuário não está no fim (evita "pular" durante leitura)
-  const noFim = msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 50;
+  // Quando entra numa nova conversa (forcarFim=true), sempre rola pro fim.
+  const noFim = forcarFim || msgs.scrollHeight === 0
+    || msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 50;
 
   let ultimaData = null;
   msgs.innerHTML = conv.historico.map(m => {
@@ -235,15 +243,18 @@ async function carregarConversa(numero) {
     return `${separador}<div class="msg ${cls}">${conteudo}${(label && tipo === 'text') ? '<div class="msg-label">' + label + '</div>' : ''}${hora}</div>`;
   }).join('');
 
-  if (noFim) msgs.scrollTop = msgs.scrollHeight;
-
   document.getElementById('empty-state').style.display  = 'none';
   document.getElementById('chat-content').style.display = 'flex';
+
+  // Scroll só funciona depois que o navegador renderizar — usa requestAnimationFrame
+  if (noFim) {
+    requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
+  }
 }
 
 async function selecionar(numero) {
   sel = numero;
-  await Promise.all([carregarLista(), carregarConversa(numero)]);
+  await Promise.all([carregarLista(), carregarConversa(numero, true)]);
   document.getElementById('chat').classList.add('mobile-aberto');
 }
 

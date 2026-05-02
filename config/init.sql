@@ -42,3 +42,17 @@ CREATE TABLE IF NOT EXISTS avaliacoes (
 CREATE INDEX idx_conversas_numero ON conversas(numero_whatsapp);
 CREATE INDEX idx_conversas_data ON conversas(iniciada_em);
 CREATE INDEX idx_avaliacoes_sentimento ON avaliacoes(sentimento);
+
+-- Histórico individual de mensagens (timeline contínua por contato)
+CREATE TABLE IF NOT EXISTS mensagens (
+    id SERIAL PRIMARY KEY,
+    numero_whatsapp VARCHAR(20) NOT NULL,
+    conversa_id INTEGER REFERENCES conversas(id),
+    role VARCHAR(10) NOT NULL,         -- 'cliente' | 'agente' | 'humano'
+    type VARCHAR(15) DEFAULT 'text',   -- 'text' | 'audio' | 'video' | 'image' | 'document'
+    text TEXT,
+    media_id VARCHAR(64),
+    criado_em TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mensagens_numero_data ON mensagens(numero_whatsapp, criado_em);
