@@ -1,4 +1,5 @@
 .env
+.llm
 gen/.env
 gen/license.env
 gen/data/
@@ -9,3 +10,4 @@ relatorios/
 .files/
 credentials/
 test_catalogo.py
+cloudflared-linux-amd64.deb
