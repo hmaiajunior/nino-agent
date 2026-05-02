@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 import httpx
 
@@ -518,12 +518,10 @@ def proxy_media(media_id: str, request: Request, _=Depends(_token)):
     """Proxy autenticado de mídia da Meta API com suporte a Range (necessário para <audio>/<video>)."""
     headers_auth = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
 
-    # 1. Obtém a URL de download real da Meta API
     try:
         meta = httpx.get(
             f"https://graph.facebook.com/v19.0/{media_id}",
-            headers=headers_auth,
-            timeout=10,
+            headers=headers_auth, timeout=10,
         )
         meta.raise_for_status()
         data = meta.json()
@@ -532,34 +530,37 @@ def proxy_media(media_id: str, request: Request, _=Depends(_token)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Falha ao obter URL da mídia: {e}")
 
-    # 2. Repassa Range header se presente (seeking em áudio/vídeo)
-    upstream_headers = {**headers_auth}
-    range_header = request.headers.get("range")
-    if range_header:
-        upstream_headers["Range"] = range_header
-
-    # 3. Streaming da resposta — evita carregar vídeos inteiros em memória
     try:
-        upstream = httpx.stream("GET", url, headers=upstream_headers, timeout=60)
-        resp = upstream.__enter__()
-        resp.raise_for_status()
+        file_resp = httpx.get(url, headers=headers_auth, timeout=60)
+        file_resp.raise_for_status()
+        content = file_resp.content
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Falha ao baixar mídia: {e}")
 
-    status_code = resp.status_code  # 200 ou 206
-    response_headers = {
-        "Content-Type": mime_type,
-        "Accept-Ranges": "bytes",
-    }
-    for h in ("Content-Length", "Content-Range"):
-        if h in resp.headers:
-            response_headers[h] = resp.headers[h]
+    total = len(content)
+    range_header = request.headers.get("range")
+    if range_header:
+        try:
+            range_val = range_header.strip().replace("bytes=", "")
+            start_str, _, end_str = range_val.partition("-")
+            start = int(start_str) if start_str else 0
+            end = int(end_str) if end_str else total - 1
+            end = min(end, total - 1)
+        except ValueError:
+            start, end = 0, total - 1
+        chunk = content[start:end + 1]
+        return Response(
+            content=chunk, status_code=206, media_type=mime_type,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{total}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(len(chunk)),
+            },
+        )
 
-    return StreamingResponse(
-        resp.iter_bytes(chunk_size=65536),
-        status_code=status_code,
-        media_type=mime_type,
-        headers=response_headers,
+    return Response(
+        content=content, media_type=mime_type,
+        headers={"Accept-Ranges": "bytes", "Content-Length": str(total)},
     )
 
 
