@@ -16,7 +16,7 @@ from src.config import settings
 from src.storage.store import (
     buscar_avaliacoes_dia,
     buscar_conversas_similares,
-    pg_conn,
+    pg_cursor,
 )
 
 SYSTEM_PROMPT = """Você é o assistente de dados da PlayBeKids, loja de moda masculina infantil.
@@ -34,53 +34,68 @@ Responda sempre em português (pt-BR), de forma direta e analítica.
 
 
 def _query_postgres(sql: str) -> list[dict]:
-    with pg_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    with pg_cursor() as cur:
+        cur.execute(sql)
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 def _build_context(pergunta: str) -> str:
-    context_parts = []
+    from datetime import date
+    context_parts = [f"DATA ATUAL: {date.today().isoformat()} (use esta data para interpretar 'hoje', 'ontem', etc.)"]
 
-    # Dados estruturados do Postgres
+    def resumo_periodo(label: str, where: str) -> None:
+        try:
+            rows = _query_postgres(f"""
+                SELECT
+                    COUNT(*) as total_conversas,
+                    SUM(CASE WHEN c.tipo_cliente = 'atacado' THEN 1 ELSE 0 END) as atacado,
+                    SUM(CASE WHEN c.tipo_cliente = 'varejo' THEN 1 ELSE 0 END) as varejo,
+                    SUM(CASE WHEN c.aceitou_grupo = true THEN 1 ELSE 0 END) as aceitou_grupo,
+                    ROUND(AVG(a.score_atendimento)::numeric, 2) as score_medio,
+                    SUM(CASE WHEN a.sentimento = 'positivo' THEN 1 ELSE 0 END) as positivos,
+                    SUM(CASE WHEN a.sentimento = 'neutro' THEN 1 ELSE 0 END) as neutros,
+                    SUM(CASE WHEN a.sentimento = 'negativo' THEN 1 ELSE 0 END) as negativos,
+                    SUM(CASE WHEN a.interesse_compra = true THEN 1 ELSE 0 END) as interesse_compra,
+                    SUM(CASE WHEN a.demanda_varejo = true THEN 1 ELSE 0 END) as demanda_varejo
+                FROM conversas c
+                JOIN avaliacoes a ON a.conversa_id = c.id
+                {where}
+            """)
+            context_parts.append(f"RESUMO {label}:\n{json.dumps(rows, ensure_ascii=False, default=str)}")
+        except Exception as e:
+            context_parts.append(f"Erro ao consultar {label}: {e}")
+
+    resumo_periodo("HOJE",        "WHERE c.iniciada_em >= CURRENT_DATE")
+    resumo_periodo("ONTEM",       "WHERE c.iniciada_em >= CURRENT_DATE - INTERVAL '1 day' AND c.iniciada_em < CURRENT_DATE")
+    resumo_periodo("ÚLTIMOS 7 DIAS", "WHERE c.iniciada_em >= CURRENT_DATE - INTERVAL '7 days'")
+    resumo_periodo("HISTÓRICO TOTAL", "")
+
     try:
-        resumo = _query_postgres("""
-            SELECT
-                COUNT(*) as total_conversas,
-                SUM(CASE WHEN c.tipo_cliente = 'atacado' THEN 1 ELSE 0 END) as atacado,
-                SUM(CASE WHEN c.tipo_cliente = 'varejo' THEN 1 ELSE 0 END) as varejo,
-                SUM(CASE WHEN c.aceitou_grupo = true THEN 1 ELSE 0 END) as aceitou_grupo,
-                ROUND(AVG(a.score_atendimento)::numeric, 2) as score_medio,
-                SUM(CASE WHEN a.sentimento = 'positivo' THEN 1 ELSE 0 END) as positivos,
-                SUM(CASE WHEN a.sentimento = 'neutro' THEN 1 ELSE 0 END) as neutros,
-                SUM(CASE WHEN a.sentimento = 'negativo' THEN 1 ELSE 0 END) as negativos,
-                SUM(CASE WHEN a.interesse_compra = true THEN 1 ELSE 0 END) as interesse_compra,
-                SUM(CASE WHEN a.demanda_varejo = true THEN 1 ELSE 0 END) as demanda_varejo
+        negativos = _query_postgres("""
+            SELECT c.numero_whatsapp, c.iniciada_em::date as data,
+                   a.sentimento, a.score_atendimento, a.tema_principal, a.duvida_resolvida
             FROM conversas c
             JOIN avaliacoes a ON a.conversa_id = c.id
+            WHERE a.sentimento = 'negativo'
+            ORDER BY c.iniciada_em DESC
+            LIMIT 50
         """)
-        context_parts.append(f"RESUMO GERAL:\n{json.dumps(resumo, ensure_ascii=False, default=str)}")
+        context_parts.append(f"CONVERSAS NEGATIVAS (últimas 50):\n{json.dumps(negativos, ensure_ascii=False, default=str)}")
+    except Exception as e:
+        context_parts.append(f"Erro conversas negativas: {e}")
 
+    try:
         temas = _query_postgres("""
             SELECT tema_principal, COUNT(*) as total
-            FROM avaliacoes
-            GROUP BY tema_principal
-            ORDER BY total DESC
+            FROM avaliacoes a
+            JOIN conversas c ON c.id = a.conversa_id
+            WHERE c.iniciada_em >= CURRENT_DATE
+            GROUP BY tema_principal ORDER BY total DESC
         """)
-        context_parts.append(f"TEMAS MAIS FREQUENTES:\n{json.dumps(temas, ensure_ascii=False)}")
-
-        origens = _query_postgres("""
-            SELECT origem, COUNT(*) as total
-            FROM conversas
-            GROUP BY origem
-            ORDER BY total DESC
-        """)
-        context_parts.append(f"ORIGENS DAS CONVERSAS:\n{json.dumps(origens, ensure_ascii=False)}")
-
+        context_parts.append(f"TEMAS HOJE:\n{json.dumps(temas, ensure_ascii=False)}")
     except Exception as e:
-        context_parts.append(f"Erro ao consultar Postgres: {e}")
+        context_parts.append(f"Erro temas: {e}")
 
     # Busca semântica no Qdrant
     try:

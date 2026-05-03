@@ -227,7 +227,10 @@ async function carregarConversa(numero, forcarFim = false) {
 
     let conteudo;
     if (tipo === 'audio') {
-      conteudo = `<audio controls src="/monitor/media/${esc(m.media_id)}?token=${TOKEN}"></audio><div class="msg-label">${esc(m.text)}</div>`;
+      // src vazio — preenchido por carregarAudioBlob() após render para evitar
+      // o bug do <audio> com OGG/OPUS streaming do WhatsApp (para em ~3s).
+      conteudo = `<audio controls preload="none" data-mid="${esc(m.media_id)}"></audio>
+                  <div class="msg-label">${esc(m.text)}</div>`;
     } else if (tipo === 'video') {
       conteudo = `<video controls src="/monitor/media/${esc(m.media_id)}?token=${TOKEN}"></video>`;
     } else if (tipo === 'image') {
@@ -245,6 +248,9 @@ async function carregarConversa(numero, forcarFim = false) {
 
   document.getElementById('empty-state').style.display  = 'none';
   document.getElementById('chat-content').style.display = 'flex';
+
+  // Baixa cada áudio como Blob (workaround do duration bug do OGG WhatsApp)
+  ativarAudios(msgs);
 
   // Scroll só funciona depois que o navegador renderizar — usa requestAnimationFrame
   if (noFim) {
@@ -337,6 +343,35 @@ async function carregarMetricas() {
 // Previne XSS nas strings injetadas no HTML
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Cache de Blob URLs por media_id — evita re-baixar entre re-renders do polling.
+const _audioBlobCache = new Map();
+
+// Workaround para áudios OGG/OPUS do WhatsApp:
+// como vêm gravados em streaming sem duration no metadata, o <audio>
+// com src direto faz UM Range request, recebe 206 e estima duração
+// errada (~3s) parando a reprodução cedo. Solução: baixar o arquivo
+// inteiro via fetch, virar Blob URL e atribuir como src — assim o
+// browser tem todos os packets OGG e o decoder calcula a duração real.
+async function carregarAudioBlob(audioEl) {
+  const mid = audioEl.dataset.mid;
+  if (!mid || audioEl.src) return;
+  try {
+    if (!_audioBlobCache.has(mid)) {
+      const r = await fetch('/monitor/media/' + mid + '?token=' + TOKEN);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      _audioBlobCache.set(mid, URL.createObjectURL(await r.blob()));
+    }
+    audioEl.src = _audioBlobCache.get(mid);
+  } catch (e) {
+    console.error('Falha ao carregar áudio', mid, e);
+  }
+}
+
+// Aciona o download dos áudios visíveis após cada render do chat
+function ativarAudios(container) {
+  container.querySelectorAll('audio[data-mid]:not([src])').forEach(carregarAudioBlob);
 }
 
 // Boot + polling 5s
