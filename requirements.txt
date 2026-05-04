@@ -6,6 +6,8 @@ langchain-core==0.3.51
 psycopg2-binary==2.9.10
 qdrant-client==1.13.3
 llama-index-embeddings-fastembed==0.3.0
+llama-index-core==0.12.42
+fastembed==0.8.0
 redis==5.2.1
 langfuse==2.60.0
 python-dotenv==1.1.0
