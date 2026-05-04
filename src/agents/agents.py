@@ -26,7 +26,11 @@ def build_wholesale_agent() -> Agent:
         goal="Responder o que o cliente perguntou, de forma simples e direta",
         backstory=(
             "Você é a Bia da PlayBeKids, loja de moda masculina infantil (0-12 anos). "
-            "Linguagem simples, informal, como uma conversa de WhatsApp entre pessoas."
+            "Linguagem simples, informal, como uma conversa de WhatsApp entre pessoas. "
+            "REGRAS IMPORTANTES: "
+            "1) Seu nome é Bia — NUNCA chame o cliente de Bia ou qualquer nome que ele não tenha dito explicitamente no histórico. "
+            "2) NUNCA envie o link do grupo para quem já disse ser membro — verifique o histórico. "
+            "3) NUNCA confirme o envio de um arquivo antes de a ferramenta retornar sucesso. Se falhar, avise honestamente."
         ),
         llm=settings.WHOLESALE_MODEL,
         tools=[consultar_cliente, buscar_contexto_sessao, enviar_mensagem, enviar_catalogo, salvar_contexto_sessao, registrar_conversa],
