@@ -35,12 +35,19 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     # Busca membro_grupo antecipadamente para não depender do agente chamar consultar_cliente
     from src.storage.store import buscar_cliente
     cliente = buscar_cliente(numero_whatsapp)
-    membro_grupo = cliente["membro_grupo"] if cliente else False
-    encerramento = (
-        f"Se membro_grupo=False: convide para https://chat.whatsapp.com/playbekids-lancamentos."
-        if not membro_grupo
-        else "Cliente já é membro do grupo — apenas agradeça o contato, sem convidar."
-    )
+    # Verifica se o convite ao grupo já foi enviado nesta conversa
+    historico_agente = [m["text"] for m in sessao.get("historico", []) if m.get("role") == "agente"]
+    grupo_link = settings.GRUPO_LINK
+    convite_ja_enviado = any(grupo_link and grupo_link in t for t in historico_agente)
+
+    if convite_ja_enviado or membro_grupo:
+        encerramento = "Cliente já recebeu o convite ou já é membro — NÃO mencione o grupo novamente."
+    else:
+        encerramento = (
+            f"Se e SOMENTE SE o cliente se despedir explicitamente (ex: 'obrigado', 'tchau', 'até mais', 'valeu'), "
+            f"inclua na mesma mensagem de despedida: '{grupo_link}'. "
+            f"Se a conversa não terminou, NÃO mencione o grupo."
+        )
 
     wholesale = build_wholesale_agent()
     task_wholesale = Task(
@@ -55,8 +62,8 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             "- Máximo 2 linhas por mensagem, exceto ao enviar condições de atacado.\n"
             "- NÃO faça perguntas a não ser que seja estritamente necessário para responder.\n"
             "- NÃO liste produtos, condições ou informações extras sem o cliente pedir.\n"
-            "- Chame enviar_mensagem UMA ÚNICA VEZ por execução. Nunca envie duas mensagens seguidas.\n"
-            "- O convite ao grupo faz parte da mensagem de encerramento — inclua no mesmo enviar_mensagem, não em chamada separada.\n"
+            "- Chame enviar_mensagem UMA ÚNICA VEZ por execução. Se já chamou enviar_mensagem, pare — não chame de novo.\n"
+            "- O convite ao grupo, se aplicável, deve estar DENTRO da mesma chamada enviar_mensagem da despedida.\n"
             "\nCONTEÚDO DA RESPOSTA POR TIPO:\n"
             "ATACADO — quando o cliente confirmar interesse em atacado, envie EXATAMENTE este texto:\n"
             "\"Vou passar as informações atualizadas do nosso atacado. \n\n\n"
@@ -67,11 +74,8 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             "CATÁLOGO — se o cliente solicitar catálogo, use enviar_catalogo com o numero_whatsapp do cliente.\n"
             "VAREJO — atenda normalmente, tire dúvidas sobre produtos, preços e disponibilidade.\n"
             "\nPASSOS OBRIGATÓRIOS (execute nesta ordem):\n"
-            f"1. Chame enviar_mensagem UMA VEZ para responder ao cliente.\n"
-            f"2. AO ENCERRAR a conversa (quando o cliente se despedir ou não houver mais dúvidas): "
-            f"chame enviar_mensagem UMA ÚNICA VEZ com a despedida E o convite juntos na mesma mensagem. {encerramento}\n"
-            f"   IMPORTANTE: o convite ao grupo NUNCA deve ser enviado no meio da conversa — SOMENTE no encerramento.\n"
-            f"   Se o cliente ainda tiver dúvidas ou a conversa não terminou, NÃO convide para o grupo ainda.\n"
+            f"1. Chame enviar_mensagem EXATAMENTE UMA VEZ.\n"
+            f"2. {encerramento}\n"
             f"3. Chame registrar_conversa com numero_whatsapp='{numero_whatsapp}', tipo_cliente='{tipo}', "
             f"origem='{sessao.get('origem', 'organico')}' e status='resolvido'."
         ),
