@@ -2,14 +2,15 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Dependências do sistema (psycopg2-binary não precisa de libpq, mas fastembed precisa de libs C)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir setuptools
+
+# Instala dependências e força setuptools no final (crewai 0.80 depende de pkg_resources)
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --force-reinstall setuptools
 
 COPY . .
 
