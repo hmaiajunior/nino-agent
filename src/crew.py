@@ -70,6 +70,8 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             f"1. Chame enviar_mensagem UMA VEZ para responder ao cliente.\n"
             f"2. AO ENCERRAR a conversa (quando o cliente se despedir ou não houver mais dúvidas): "
             f"chame enviar_mensagem UMA ÚNICA VEZ com a despedida E o convite juntos na mesma mensagem. {encerramento}\n"
+            f"   IMPORTANTE: o convite ao grupo NUNCA deve ser enviado no meio da conversa — SOMENTE no encerramento.\n"
+            f"   Se o cliente ainda tiver dúvidas ou a conversa não terminou, NÃO convide para o grupo ainda.\n"
             f"3. Chame registrar_conversa com numero_whatsapp='{numero_whatsapp}', tipo_cliente='{tipo}', "
             f"origem='{sessao.get('origem', 'organico')}' e status='resolvido'."
         ),
