@@ -88,7 +88,7 @@ class EnviarMensagemTool(BaseTool):
             historico.append({"role": "agente", "text": texto})
             sessao["historico"] = historico
             store.salvar_sessao(numero, sessao)
-            store.salvar_mensagem(numero, "agente", text=texto, type="text")
+            store.salvar_mensagem_sessao(numero, "agente", text=texto, type="text")
             return "mensagem_enviada"
         except httpx.HTTPStatusError as e:
             return f"erro_envio: {e} | body: {e.response.text}"

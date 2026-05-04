@@ -17,8 +17,8 @@ Após cópia das credenciais Google Drive via scp, confirmar que a ferramenta `e
 
 ---
 
-### [P3] Associar `conversa_id` às mensagens
-Passar `conversa_id` da sessão Redis para `salvar_mensagem` nos pontos de envio, para rastreabilidade completa.
+### ~~[P3] Associar `conversa_id` às mensagens~~ ✅ Concluído
+`store.py`: adicionada `salvar_mensagem_sessao()` que lê `conversa_id` da sessão Redis automaticamente. Todos os pontos de chamada (`webhook.py`, `qualification.py`, `agent_tools.py`, `monitor.py`) atualizados.
 
 ---
 

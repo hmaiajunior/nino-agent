@@ -678,7 +678,7 @@ def enviar_midia_humano(numero: str, file: UploadFile = File(...), _=Depends(_to
     historico.append({"role": "humano", "type": msg_type, "media_id": media_id, "text": label})
     sessao["historico"] = historico
     store.salvar_sessao(numero, sessao)
-    store.salvar_mensagem(numero, "humano", text=label, type=msg_type, media_id=media_id)
+    store.salvar_mensagem_sessao(numero, "humano", text=label, type=msg_type, media_id=media_id)
 
     return {"status": "enviado", "type": msg_type, "media_id": media_id}
 
@@ -698,6 +698,6 @@ def enviar_mensagem_humano(numero: str, body: _EnvioBody, _=Depends(_token)):
     historico.append({"role": "humano", "text": body.texto})
     sessao["historico"] = historico
     store.salvar_sessao(numero, sessao)
-    store.salvar_mensagem(numero, "humano", text=body.texto, type="text")
+    store.salvar_mensagem_sessao(numero, "humano", text=body.texto, type="text")
 
     return {"status": "enviado"}

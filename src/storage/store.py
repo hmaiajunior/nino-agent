@@ -169,6 +169,14 @@ def salvar_mensagem(numero: str, role: str, text: str | None = None,
         )
 
 
+def salvar_mensagem_sessao(numero: str, role: str, text: str | None = None,
+                           type: str = "text", media_id: str | None = None) -> None:
+    """Persiste mensagem lendo conversa_id da sessão Redis automaticamente."""
+    sessao = buscar_sessao(numero) or {}
+    conversa_id = sessao.get("conversa_id")
+    salvar_mensagem(numero, role, text=text, type=type, media_id=media_id, conversa_id=conversa_id)
+
+
 def buscar_mensagens(numero: str, limite: int = 500) -> list[dict]:
     """Retorna o histórico ordenado cronologicamente de um número."""
     with pg_cursor() as cur:
