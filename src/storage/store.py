@@ -75,6 +75,68 @@ def salvar_conversa(dados: dict) -> int:
         return cur.fetchone()[0]
 
 
+def buscar_conversa_do_dia(numero_whatsapp: str) -> int | None:
+    """Retorna o id da conversa já aberta hoje para este número, ou None."""
+    with pg_cursor() as cur:
+        cur.execute(
+            "SELECT id FROM conversas WHERE numero_whatsapp = %s AND DATE(iniciada_em) = CURRENT_DATE ORDER BY id DESC LIMIT 1",
+            (numero_whatsapp,),
+        )
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
+def upsert_avaliacao_do_dia(dados: dict) -> None:
+    """Insere ou atualiza a avaliação da conversa. Negativo prevalece sobre neutro/positivo."""
+    with pg_cursor() as cur:
+        cur.execute("SELECT id, sentimento FROM avaliacoes WHERE conversa_id = %s", (dados["conversa_id"],))
+        existing = cur.fetchone()
+        if existing:
+            # Negativo prevalece; só atualiza se o novo for mais grave
+            ordem = {"positivo": 0, "neutro": 1, "negativo": 2}
+            novo = dados.get("sentimento", "neutro")
+            atual = existing[1] or "neutro"
+            sentimento_final = novo if ordem.get(novo, 1) > ordem.get(atual, 1) else atual
+            cur.execute(
+                """UPDATE avaliacoes SET
+                     sentimento = %s,
+                     score_atendimento = LEAST(score_atendimento, %s),
+                     tema_principal = %s,
+                     duvida_resolvida = %s,
+                     interesse_compra = COALESCE(interesse_compra, %s) OR %s,
+                     demanda_varejo = COALESCE(demanda_varejo, FALSE) OR %s,
+                     observacoes = %s
+                   WHERE id = %s""",
+                (
+                    sentimento_final,
+                    dados.get("score_atendimento"),
+                    dados.get("tema_principal"),
+                    dados.get("duvida_resolvida"),
+                    dados.get("interesse_compra"), dados.get("interesse_compra"),
+                    dados.get("demanda_varejo", False),
+                    dados.get("observacoes"),
+                    existing[0],
+                ),
+            )
+        else:
+            cur.execute(
+                """INSERT INTO avaliacoes
+                   (conversa_id, sentimento, score_atendimento, tema_principal,
+                    duvida_resolvida, interesse_compra, demanda_varejo, observacoes)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (
+                    dados["conversa_id"],
+                    dados.get("sentimento"),
+                    dados.get("score_atendimento"),
+                    dados.get("tema_principal"),
+                    dados.get("duvida_resolvida"),
+                    dados.get("interesse_compra"),
+                    dados.get("demanda_varejo", False),
+                    dados.get("observacoes"),
+                ),
+            )
+
+
 def salvar_avaliacao(dados: dict) -> None:
     with pg_cursor() as cur:
         cur.execute(

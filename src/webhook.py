@@ -12,7 +12,7 @@ from fastapi.responses import PlainTextResponse
 from src.config import settings
 from src.crew import run_atendimento
 from src.sentiment import run_sentiment
-from src.storage.store import buscar_sessao, salvar_sessao, salvar_conversa, salvar_mensagem
+from src.storage.store import buscar_sessao, salvar_sessao, salvar_conversa, salvar_mensagem, buscar_conversa_do_dia
 
 from src.monitor import router as monitor_router
 
@@ -43,6 +43,9 @@ def _garantir_conversa_registrada(numero: str):
     historico = sessao.get("historico", [])
     texto = " | ".join([f"{m['role']}: {m['text']}" for m in historico])
 
+    if not conversa_id:
+        # Reutiliza conversa já aberta hoje para este número
+        conversa_id = buscar_conversa_do_dia(numero)
     if not conversa_id:
         conversa_id = salvar_conversa({
             "numero_whatsapp": numero,

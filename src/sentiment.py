@@ -84,7 +84,7 @@ async def run_sentiment(numero_whatsapp: str) -> None:
         },
     )
 
-    store.salvar_avaliacao({
+    store.upsert_avaliacao_do_dia({
         "conversa_id": conversa_id,
         "sentimento": dados["sentimento"],
         "score_atendimento": dados["score_atendimento"],
