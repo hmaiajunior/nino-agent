@@ -37,6 +37,8 @@ services:
       POSTGRES_HOST: nino-postgres
       REDIS_URL: redis://nino-redis:6379
       QDRANT_URL: http://nino-qdrant:6333
+    volumes:
+      - ./credentials:/app/credentials:ro
     depends_on:
       postgres:
         condition: service_healthy
