@@ -10,7 +10,7 @@ COPY requirements.txt .
 
 # Instala dependências e força setuptools no final (crewai 0.80 depende de pkg_resources)
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir --force-reinstall setuptools
+RUN pip install --no-cache-dir --force-reinstall "setuptools<71" 
 
 COPY . .
 
