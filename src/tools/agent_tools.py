@@ -27,7 +27,12 @@ class NumeroSimplesSchema(BaseModel):
     numero: str = Field(description="Número WhatsApp")
 
 class ConversaSchema(BaseModel):
-    dados_json: str = Field(description="Dados da conversa em JSON string")
+    numero_whatsapp: str = Field(description="Número WhatsApp do cliente")
+    tipo_cliente: str = Field(default="atacado", description="Tipo: atacado, varejo ou desconhecido")
+    origem: str = Field(default="organico", description="Origem do contato")
+    status: str = Field(default="resolvido", description="Status: resolvido, pendente ou convertido")
+    aceitou_grupo: bool | None = Field(default=None, description="Se o cliente aceitou o convite para o grupo")
+    cliente_recorrente: bool = Field(default=False, description="Se é cliente recorrente")
 
 class AvaliacaoSchema(BaseModel):
     dados_json: str = Field(description=(
@@ -121,17 +126,24 @@ class RegistrarConversaTool(BaseTool):
     description: str = "Persiste os dados finais da conversa no Postgres e indexa no Qdrant."
     args_schema: Type[BaseModel] = ConversaSchema
 
-    def _run(self, dados_json: str) -> str:
-        dados = json.loads(dados_json)
+    def _run(self, numero_whatsapp: str, tipo_cliente: str = "atacado", origem: str = "organico",
+             status: str = "resolvido", aceitou_grupo: bool | None = None,
+             cliente_recorrente: bool = False) -> str:
+        dados = {
+            "numero_whatsapp": numero_whatsapp,
+            "tipo_cliente": tipo_cliente,
+            "origem": origem,
+            "status": status,
+            "aceitou_grupo": aceitou_grupo,
+            "cliente_recorrente": cliente_recorrente,
+        }
         conversa_id = store.salvar_conversa(dados)
 
-        # Monta texto para indexação — usa historico dos dados ou busca da sessão
-        numero = dados.get("numero_whatsapp", "")
-        texto = dados.get("historico", "")
-        if not texto and numero:
-            sessao = store.buscar_sessao(numero) or {}
-            historico = sessao.get("historico", [])
-            texto = " | ".join([f"{m['role']}: {m['text']}" for m in historico])
+        # Monta texto para indexação — busca histórico da sessão
+        numero = numero_whatsapp
+        sessao = store.buscar_sessao(numero) or {}
+        historico = sessao.get("historico", [])
+        texto = " | ".join([f"{m['role']}: {m['text']}" for m in historico])
 
         if texto:
             store.indexar_conversa(
@@ -139,8 +151,8 @@ class RegistrarConversaTool(BaseTool):
                 texto=texto,
                 metadata={
                     "conversa_id": conversa_id,
-                    "tipo_cliente": dados.get("tipo_cliente", "atacado"),
-                    "origem": dados.get("origem", "organico"),
+                    "tipo_cliente": tipo_cliente,
+                    "origem": origem,
                 },
             )
 
