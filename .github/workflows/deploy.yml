@@ -20,6 +20,3 @@ jobs:
             -p 22022 \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "cd /opt/ninoagent/nino-agent && ./deploy.sh"
-          script: |
-            cd /opt/ninoagent/nino-agent
-            ./deploy.sh
