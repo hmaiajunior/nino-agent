@@ -380,7 +380,7 @@ carregarMetricas();
 setInterval(async () => {
   await Promise.all([carregarLista(), carregarMetricas()]);
   if (sel) await carregarConversa(sel);
-}, 5000);
+}, 15000);
 </script>
 </body>
 </html>"""
