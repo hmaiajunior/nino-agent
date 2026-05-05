@@ -56,7 +56,6 @@ class QuerySchema(BaseModel):
 class ConsultarClienteTool(BaseTool):
     name: str = "consultar_cliente"
     description: str = "Consulta se o número já é cliente cadastrado. Retorna perfil ou 'novo_cliente'."
-    args_schema: Type[BaseModel] = NumeroSchema
 
     def _run(self, numero_whatsapp: str) -> str:
         cliente = store.buscar_cliente(numero_whatsapp)
@@ -68,7 +67,6 @@ class ConsultarClienteTool(BaseTool):
 class EnviarMensagemTool(BaseTool):
     name: str = "enviar_mensagem"
     description: str = "Envia mensagem de texto via WhatsApp (Meta API oficial)."
-    args_schema: Type[BaseModel] = MensagemSchema
 
     def _run(self, numero: str, texto: str) -> str:
         to = numero if numero.startswith("+") else f"+{numero}"
@@ -104,7 +102,6 @@ class EnviarMensagemTool(BaseTool):
 class SalvarContextoSessaoTool(BaseTool):
     name: str = "salvar_contexto_sessao"
     description: str = "Salva o contexto da conversa em andamento no Redis."
-    args_schema: Type[BaseModel] = SessaoSchema
 
     def _run(self, numero: str, contexto_json: str) -> str:
         store.salvar_sessao(numero, json.loads(contexto_json))
@@ -114,7 +111,6 @@ class SalvarContextoSessaoTool(BaseTool):
 class BuscarContextoSessaoTool(BaseTool):
     name: str = "buscar_contexto_sessao"
     description: str = "Recupera o contexto da conversa em andamento do Redis."
-    args_schema: Type[BaseModel] = NumeroSimplesSchema
 
     def _run(self, numero: str) -> str:
         dados = store.buscar_sessao(numero)
@@ -124,7 +120,6 @@ class BuscarContextoSessaoTool(BaseTool):
 class RegistrarConversaTool(BaseTool):
     name: str = "registrar_conversa"
     description: str = "Persiste os dados finais da conversa no Postgres e indexa no Qdrant."
-    args_schema: Type[BaseModel] = ConversaSchema
 
     def _run(self, numero_whatsapp: str, tipo_cliente: str = "atacado", origem: str = "organico",
              status: str = "resolvido", aceitou_grupo: bool | None = None,
@@ -173,7 +168,6 @@ class RegistrarAvaliacaoTool(BaseTool):
         "score (int 1-5), tema_principal (str max 50 chars), duvida_resolvida (bool), "
         "interesse_compra (bool), demanda_varejo (bool)."
     )
-    args_schema: Type[BaseModel] = AvaliacaoSchema
 
     def _run(self, dados_json: str) -> str:
         import ast
@@ -209,7 +203,6 @@ class RegistrarAvaliacaoTool(BaseTool):
 class BuscarAvaliacoesDiaTool(BaseTool):
     name: str = "buscar_avaliacoes_do_dia"
     description: str = "Busca todas as avaliações de um dia específico (formato YYYY-MM-DD)."
-    args_schema: Type[BaseModel] = DataSchema
 
     def _run(self, data: str) -> str:
         avaliacoes = store.buscar_avaliacoes_dia(data)
@@ -219,7 +212,6 @@ class BuscarAvaliacoesDiaTool(BaseTool):
 class BuscarTemasRecorrentesTool(BaseTool):
     name: str = "buscar_temas_recorrentes"
     description: str = "Busca conversas semanticamente similares no Qdrant para identificar padrões."
-    args_schema: Type[BaseModel] = QuerySchema
 
     def _run(self, query: str) -> str:
         resultados = store.buscar_conversas_similares(query, limit=10)
@@ -229,7 +221,6 @@ class BuscarTemasRecorrentesTool(BaseTool):
 class EnviarCatalogTool(BaseTool):
     name: str = "enviar_catalogo"
     description: str = "Busca o PDF mais recente na pasta de catálogo do Google Drive e envia ao cliente via WhatsApp."
-    args_schema: Type[BaseModel] = NumeroSchema
 
     def _run(self, numero_whatsapp: str) -> str:
         from google.oauth2 import service_account
