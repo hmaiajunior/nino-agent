@@ -262,11 +262,13 @@ async function selecionar(numero) {
   sel = numero;
   await Promise.all([carregarLista(), carregarConversa(numero, true)]);
   document.getElementById('chat').classList.add('mobile-aberto');
+  _startPolling();
 }
 
 function voltarLista() {
   document.getElementById('chat').classList.remove('mobile-aberto');
   sel = null;
+  _startPolling();
 }
 
 async function assumir() {
@@ -377,10 +379,17 @@ function ativarAudios(container) {
 // Boot + polling 5s
 carregarLista();
 carregarMetricas();
-setInterval(async () => {
-  await Promise.all([carregarLista(), carregarMetricas()]);
-  if (sel) await carregarConversa(sel);
-}, 15000);
+
+let _pollInterval = null;
+function _startPolling() {
+  if (_pollInterval) clearInterval(_pollInterval);
+  _pollInterval = setInterval(async () => {
+    await Promise.all([carregarLista(), carregarMetricas()]);
+    if (sel) await carregarConversa(sel);
+    _startPolling();
+  }, sel ? 5000 : 60000);
+}
+_startPolling();
 </script>
 </body>
 </html>"""
