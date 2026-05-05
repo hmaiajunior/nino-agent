@@ -36,6 +36,7 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     # Busca membro_grupo antecipadamente para não depender do agente chamar consultar_cliente
     from src.storage.store import buscar_cliente
     cliente = buscar_cliente(numero_whatsapp)
+    membro_grupo = cliente["membro_grupo"] if cliente else False
     # Verifica se o convite ao grupo já foi enviado nesta conversa
     historico_agente = [m["text"] for m in sessao.get("historico", []) if m.get("role") == "agente"]
     grupo_link = settings.GRUPO_LINK
