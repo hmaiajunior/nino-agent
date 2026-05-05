@@ -5,6 +5,7 @@ Execute com: uvicorn src.webhook:app --host 0.0.0.0 --port 8002
 
 import asyncio
 import logging
+import time
 from fastapi import FastAPI, Request, Query
 
 logging.basicConfig(level=logging.INFO)
@@ -152,6 +153,17 @@ async def whatsapp_webhook(request: Request):
         msg_type = msg.get("type")
         numero = _normalizar_numero(msg["from"])
         origem = changes.get("contacts", [{}])[0].get("profile", {}).get("name", "organico")
+
+        # Ignora echos: mensagens cujo remetente é o próprio número do agente
+        metadata_phone_id = changes.get("metadata", {}).get("phone_number_id", "")
+        if msg["from"] == metadata_phone_id:
+            return {"status": "ignored_echo"}
+
+        # Ignora retries da Meta: mensagens com timestamp > 5 minutos no passado
+        msg_ts = int(msg.get("timestamp", 0))
+        if msg_ts and (time.time() - msg_ts) > 300:
+            logger.warning("Mensagem ignorada por timestamp antigo: %s de %s (ts=%s)", msg_type, numero, msg_ts)
+            return {"status": "ignored_old_message"}
     except (KeyError, IndexError):
         return {"status": "ignored"}
 
