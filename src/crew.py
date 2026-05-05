@@ -5,6 +5,7 @@ from crewai import Crew, Task, Process
 
 import src.observability  # noqa: F401 — ativa litellm.success_callback para LangFuse
 from src.agents.agents import build_wholesale_agent, build_insight_agent
+from src.config import settings
 from src.qualification import run_qualification
 from src.storage.store import buscar_sessao
 

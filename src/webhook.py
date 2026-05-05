@@ -49,7 +49,7 @@ def _garantir_conversa_registrada(numero: str):
     if not conversa_id:
         conversa_id = salvar_conversa({
             "numero_whatsapp": numero,
-            "tipo_cliente": sessao.get("tipo_cliente", "desconhecido"),
+            "tipo_cliente": sessao.get("tipo_cliente", "atacado"),
             "cliente_recorrente": sessao.get("cliente_recorrente", False),
             "origem": sessao.get("origem", "organico"),
             "status": "resolvido",
@@ -64,7 +64,7 @@ def _garantir_conversa_registrada(numero: str):
             metadata={
                 "conversa_id": conversa_id,
                 "numero_whatsapp": numero,
-                "tipo_cliente": sessao.get("tipo_cliente", "desconhecido"),
+                "tipo_cliente": sessao.get("tipo_cliente", "atacado"),
                 "origem": sessao.get("origem", "organico"),
             },
         )
