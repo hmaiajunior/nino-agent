@@ -1,5 +1,6 @@
 """Router de monitoramento — lista conversas e expõe ações de controle humano."""
 
+import hmac
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
@@ -403,9 +404,16 @@ class _EnvioBody(BaseModel):
 
 # --- UI ---
 
+def _token_valido(token: str) -> bool:
+    """Comparação constant-time para evitar timing attack."""
+    if not settings.MONITOR_TOKEN or not token:
+        return False
+    return hmac.compare_digest(token, settings.MONITOR_TOKEN)
+
+
 @router.get("/", response_class=HTMLResponse, include_in_schema=False)
 def monitor_ui(token: str = Query(...)):
-    if not settings.MONITOR_TOKEN or token != settings.MONITOR_TOKEN:
+    if not _token_valido(token):
         raise HTTPException(status_code=403, detail="Token inválido")
     return HTMLResponse(_HTML.replace("{{TOKEN}}", token))
 
@@ -413,7 +421,7 @@ def monitor_ui(token: str = Query(...)):
 # --- Auth ---
 
 def _token(token: str = Query(..., description="Token de acesso ao monitor")):
-    if not settings.MONITOR_TOKEN or token != settings.MONITOR_TOKEN:
+    if not _token_valido(token):
         raise HTTPException(status_code=403, detail="Token inválido")
 
 
@@ -549,33 +557,51 @@ def detalhar_conversa(numero: str, _=Depends(_token)):
 @router.post("/conversas/{numero}/assumir")
 def assumir_conversa(numero: str, _=Depends(_token)):
     """Ativa modo humano: pausa o agente para esta conversa."""
-    sessao = store.buscar_sessao(numero)
-    if not sessao:
+    if not store.buscar_sessao(numero):
         raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
-    sessao["modo"] = "humano"
-    store.salvar_sessao(numero, sessao)
+    store.merge_sessao(numero, modo="humano")
     return {"status": "assumido", "numero": numero}
 
 
 @router.post("/conversas/{numero}/devolver")
 def devolver_conversa(numero: str, _=Depends(_token)):
     """Remove modo humano: agente volta a responder na próxima mensagem do cliente."""
-    sessao = store.buscar_sessao(numero)
-    if not sessao:
+    if not store.buscar_sessao(numero):
         raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
-    sessao.pop("modo", None)
-    store.salvar_sessao(numero, sessao)
+    # modo=None é tratado como "não-humano" pelos checks `sessao.get("modo") == "humano"`.
+    store.merge_sessao(numero, modo=None)
     return {"status": "devolvido", "numero": numero}
 
 
-_media_cache: dict[str, tuple[bytes, str]] = {}  # media_id → (content, mime_type)
+# LRU bounded — evita vazar RAM em VPS pequeno (Hetzner CX22 tem ~4GB).
+# Cada item ocupa o tamanho real da mídia (áudio ~100KB, imagem ~1MB).
+from collections import OrderedDict
+
+_MEDIA_CACHE_MAX = 64
+_media_cache: "OrderedDict[str, tuple[bytes, str]]" = OrderedDict()
+
+
+def _cache_get(media_id: str):
+    if media_id in _media_cache:
+        _media_cache.move_to_end(media_id)
+        return _media_cache[media_id]
+    return None
+
+
+def _cache_put(media_id: str, value: tuple[bytes, str]) -> None:
+    _media_cache[media_id] = value
+    _media_cache.move_to_end(media_id)
+    while len(_media_cache) > _MEDIA_CACHE_MAX:
+        _media_cache.popitem(last=False)
+
 
 @router.get("/media/{media_id}")
 def proxy_media(media_id: str, request: Request, _=Depends(_token)):
     """Proxy autenticado de mídia da Meta API com suporte a Range (necessário para <audio>/<video>)."""
     headers_auth = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
 
-    if media_id not in _media_cache:
+    cached = _cache_get(media_id)
+    if cached is None:
         try:
             meta = httpx.get(
                 f"https://graph.facebook.com/v19.0/{media_id}",
@@ -591,7 +617,7 @@ def proxy_media(media_id: str, request: Request, _=Depends(_token)):
         try:
             file_resp = httpx.get(url, headers=headers_auth, timeout=60)
             file_resp.raise_for_status()
-            _media_cache[media_id] = (file_resp.content, mime_type)
+            _cache_put(media_id, (file_resp.content, mime_type))
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Falha ao baixar mídia: {e}")
 
@@ -683,10 +709,7 @@ def enviar_midia_humano(numero: str, file: UploadFile = File(...), _=Depends(_to
         raise HTTPException(status_code=502, detail=f"Falha ao enviar mídia: {e}")
 
     # 4. Registra no histórico Redis e na timeline persistente
-    historico = sessao.get("historico", [])
-    historico.append({"role": "humano", "type": msg_type, "media_id": media_id, "text": label})
-    sessao["historico"] = historico
-    store.salvar_sessao(numero, sessao)
+    store.append_historico(numero, {"role": "humano", "type": msg_type, "media_id": media_id, "text": label})
     store.salvar_mensagem_sessao(numero, "humano", text=label, type=msg_type, media_id=media_id)
 
     return {"status": "enviado", "type": msg_type, "media_id": media_id}
@@ -703,10 +726,7 @@ def enviar_mensagem_humano(numero: str, body: _EnvioBody, _=Depends(_token)):
 
     enviar_whatsapp(numero, body.texto)
 
-    historico = sessao.get("historico", [])
-    historico.append({"role": "humano", "text": body.texto})
-    sessao["historico"] = historico
-    store.salvar_sessao(numero, sessao)
+    store.append_historico(numero, {"role": "humano", "text": body.texto})
     store.salvar_mensagem_sessao(numero, "humano", text=body.texto, type="text")
 
     return {"status": "enviado"}

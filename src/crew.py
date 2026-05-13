@@ -16,9 +16,12 @@ def _build_crew(agents, tasks):
 
 
 async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "organico") -> str:
-    sessao = buscar_sessao(numero_whatsapp)
+    sessao = buscar_sessao(numero_whatsapp) or {}
 
-    if not sessao:
+    # Sessão sem tipo_cliente = primeira interação. O webhook cria a sessão
+    # com `historico` ao receber a mensagem (antes do timer), então `not sessao`
+    # não diferencia "novo" de "já qualificado".
+    if not sessao.get("tipo_cliente"):
         await run_qualification(numero_whatsapp, mensagem, origem)
         return "qualificado"
 

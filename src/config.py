@@ -17,15 +17,13 @@ class Settings:
     WHOLESALE_MODEL: str = os.getenv("WHOLESALE_MODEL", "openrouter/anthropic/claude-sonnet-4-5")
     INSIGHT_MODEL: str = os.getenv("INSIGHT_MODEL", "openrouter/anthropic/claude-sonnet-4-5")
 
-    # WhatsApp
-    EVOLUTION_API_URL: str = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
-    EVOLUTION_API_KEY: str = os.getenv("EVOLUTION_API_KEY", "")
-    EVOLUTION_INSTANCE: str = os.getenv("EVOLUTION_INSTANCE", "ninoagent")
-
     # WhatsApp — Meta API oficial
     WHATSAPP_TOKEN: str = os.getenv("WHATSAPP_TOKEN", "")
     WHATSAPP_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
     WHATSAPP_VERIFY_TOKEN: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
+    # App Secret do Meta for Developers — usado para validar X-Hub-Signature-256.
+    # Se vazio, validação de assinatura é desabilitada (modo permissivo).
+    WHATSAPP_APP_SECRET: str = os.getenv("WHATSAPP_APP_SECRET", "")
 
     # Postgres
     POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")

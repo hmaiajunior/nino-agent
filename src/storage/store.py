@@ -302,6 +302,71 @@ def encerrar_sessao(numero: str) -> None:
     redis_conn().delete(f"session:{numero}")
 
 
+def append_historico(numero: str, entrada: dict) -> int:
+    """Append atômico ao historico da sessão via WATCH/MULTI/EXEC.
+
+    Resolve a race condition do read-modify-write entre webhook e tool de envio.
+    Retorna o tamanho do histórico após o append.
+    """
+    key = f"session:{numero}"
+    ttl = settings.SESSION_TIMEOUT_MINUTES * 60
+    conn = redis_conn()
+    for _ in range(8):
+        with conn.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                sessao = json.loads(raw) if raw else {}
+                historico = sessao.get("historico", [])
+                historico.append(entrada)
+                sessao["historico"] = historico
+                pipe.multi()
+                pipe.setex(key, ttl, json.dumps(sessao, ensure_ascii=False))
+                pipe.execute()
+                return len(historico)
+            except redis.WatchError:
+                continue
+    raise RuntimeError(f"Falha ao append no historico de {numero}: contenção excessiva")
+
+
+def merge_sessao(numero: str, **campos) -> dict:
+    """Merge atômico de campos na sessão sem tocar no histórico (WATCH/MULTI/EXEC)."""
+    key = f"session:{numero}"
+    ttl = settings.SESSION_TIMEOUT_MINUTES * 60
+    conn = redis_conn()
+    for _ in range(8):
+        with conn.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                sessao = json.loads(raw) if raw else {}
+                sessao.update(campos)
+                pipe.multi()
+                pipe.setex(key, ttl, json.dumps(sessao, ensure_ascii=False))
+                pipe.execute()
+                return sessao
+            except redis.WatchError:
+                continue
+    raise RuntimeError(f"Falha ao merge sessão de {numero}: contenção excessiva")
+
+
+def msg_ja_processada(msg_id: str | None, ttl: int = 86400) -> bool:
+    """Idempotência: marca msg_id como processada. Retorna True se já estava marcada."""
+    if not msg_id:
+        return False
+    setou = redis_conn().set(f"msg:seen:{msg_id}", 1, nx=True, ex=ttl)
+    return not setou
+
+
+def adquirir_lock_numero(numero: str, ttl: int = 120) -> bool:
+    """Lock por número via Redis SET NX. True se adquiriu, False se já estava preso."""
+    return bool(redis_conn().set(f"session:lock:{numero}", 1, nx=True, ex=ttl))
+
+
+def liberar_lock_numero(numero: str) -> None:
+    redis_conn().delete(f"session:lock:{numero}")
+
+
 def listar_sessoes_ativas() -> list[dict]:
     """Retorna todas as sessões Redis ativas (prefixo session:*)."""
     r = redis_conn()

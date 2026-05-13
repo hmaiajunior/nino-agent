@@ -85,12 +85,7 @@ class EnviarMensagemTool(BaseTool):
         try:
             r = httpx.post(url, json=payload, headers=headers, timeout=10)
             r.raise_for_status()
-            # Registra a mensagem do agente no histórico da sessão e no Postgres
-            sessao = store.buscar_sessao(numero) or {}
-            historico = sessao.get("historico", [])
-            historico.append({"role": "agente", "text": texto})
-            sessao["historico"] = historico
-            store.salvar_sessao(numero, sessao)
+            store.append_historico(numero, {"role": "agente", "text": texto})
             store.salvar_mensagem_sessao(numero, "agente", text=texto, type="text")
             return "mensagem_enviada"
         except httpx.HTTPStatusError as e:
@@ -104,7 +99,8 @@ class SalvarContextoSessaoTool(BaseTool):
     description: str = "Salva o contexto da conversa em andamento no Redis."
 
     def _run(self, numero: str, contexto_json: str) -> str:
-        store.salvar_sessao(numero, json.loads(contexto_json))
+        # Merge atômico: preserva historico e demais campos não enviados pelo LLM.
+        store.merge_sessao(numero, **json.loads(contexto_json))
         return "contexto_salvo"
 
 
@@ -151,11 +147,9 @@ class RegistrarConversaTool(BaseTool):
                 },
             )
 
-        # Salva conversa_id na sessão para o SentimentAgent usar
+        # Salva conversa_id na sessão para o SentimentAgent usar (merge atômico)
         if numero:
-            sessao = store.buscar_sessao(numero) or {}
-            sessao["conversa_id"] = conversa_id
-            store.salvar_sessao(numero, sessao)
+            store.merge_sessao(numero, conversa_id=conversa_id)
 
         return f"conversa_id={conversa_id}"
 
@@ -223,12 +217,14 @@ class EnviarCatalogTool(BaseTool):
     description: str = "Busca o PDF mais recente na pasta de catálogo do Google Drive e envia ao cliente via WhatsApp."
 
     def _run(self, numero_whatsapp: str) -> str:
+        from io import BytesIO
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseDownload
 
         creds = service_account.Credentials.from_service_account_file(
             settings.GOOGLE_SA_CREDENTIALS_PATH,
-            scopes=["https://www.googleapis.com/auth/drive"],
+            scopes=["https://www.googleapis.com/auth/drive.readonly"],
         )
         drive = build("drive", "v3", credentials=creds, cache_discovery=False)
 
@@ -246,30 +242,51 @@ class EnviarCatalogTool(BaseTool):
         file_id = files[0]["id"]
         file_name = files[0]["name"]
 
-        drive.permissions().create(
-            fileId=file_id,
-            body={"type": "anyone", "role": "reader"},
-        ).execute()
+        # Baixa o PDF na memória — evita tornar o arquivo público no Drive.
+        buf = BytesIO()
+        request = drive.files().get_media(fileId=file_id)
+        downloader = MediaIoBaseDownload(buf, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buf.seek(0)
+        pdf_bytes = buf.getvalue()
 
-        media_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        # 1. Upload do PDF para a Meta — devolve media_id
+        headers_auth = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
+        try:
+            upload_resp = httpx.post(
+                f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/media",
+                headers=headers_auth,
+                files={"file": (file_name, pdf_bytes, "application/pdf")},
+                data={"messaging_product": "whatsapp", "type": "application/pdf"},
+                timeout=60,
+            )
+            upload_resp.raise_for_status()
+            media_id = upload_resp.json()["id"]
+        except Exception as e:
+            return f"erro_upload: {e}"
 
+        # 2. Envia a mensagem usando media_id (não link público)
+        to = numero_whatsapp if numero_whatsapp.startswith("+") else f"+{numero_whatsapp}"
         url = f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
-        headers = {
-            "Authorization": f"Bearer {settings.WHATSAPP_TOKEN}",
-            "Content-Type": "application/json",
-        }
         payload = {
             "messaging_product": "whatsapp",
-            "to": numero_whatsapp,
+            "to": to,
             "type": "document",
-            "document": {
-                "link": media_url,
-                "filename": file_name,
-            },
+            "document": {"id": media_id, "filename": file_name},
         }
         try:
-            r = httpx.post(url, json=payload, headers=headers, timeout=30)
+            r = httpx.post(url, json=payload, headers={**headers_auth, "Content-Type": "application/json"}, timeout=30)
             r.raise_for_status()
+            # Registra no histórico para aparecer no monitor
+            store.append_historico(numero_whatsapp, {
+                "role": "agente", "type": "document", "media_id": media_id,
+                "text": f"[catálogo: {file_name}]",
+            })
+            store.salvar_mensagem_sessao(numero_whatsapp, "agente",
+                                         text=f"[catálogo: {file_name}]",
+                                         type="document", media_id=media_id)
             return "catalogo_enviado"
         except Exception as e:
             return f"erro_envio: {e}"
