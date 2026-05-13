@@ -5,7 +5,13 @@
 """
 
 import os
+import litellm
 from src.config import settings
+
+# Retry nativo do LiteLLM para chamadas via CrewAI (WholesaleAgent, InsightAgent).
+# Cobre 5xx/timeout/rate-limit do OpenRouter, Anthropic, Gemini. Backoff interno.
+litellm.num_retries = 3
+litellm.request_timeout = 60
 
 _enabled = bool(settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY)
 _langfuse = None
@@ -15,7 +21,6 @@ if _enabled:
     os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.LANGFUSE_SECRET_KEY)
     os.environ.setdefault("LANGFUSE_HOST", settings.LANGFUSE_HOST)
 
-    import litellm
     if "langfuse" not in litellm.success_callback:
         litellm.success_callback.append("langfuse")
     if "langfuse" not in litellm.failure_callback:

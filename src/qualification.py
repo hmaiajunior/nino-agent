@@ -3,11 +3,19 @@
 import json
 import groq
 from src.config import settings
+from src.llm_retry import groq_retry
 from src.observability import new_trace
 from src.storage import store
 from src.whatsapp import enviar_whatsapp
 
 _client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
+_LLM_TIMEOUT = 20  # segundos
+
+
+@groq_retry
+async def _completion(**kwargs):
+    """Chamada Groq com retry + timeout — protege contra 5xx/timeout transitórios."""
+    return await _client.chat.completions.create(timeout=_LLM_TIMEOUT, **kwargs)
 
 _SYSTEM = (
     "Você é a Ana da PlayBeKids, loja de moda masculina infantil (0-12 anos). "
@@ -83,7 +91,7 @@ async def _saudacao_cliente_conhecido(nome: str, tipo: str, mensagem: str, trace
             ),
         },
     ]
-    completion = await _client.chat.completions.create(
+    completion = await _completion(
         model=settings.GROQ_MODEL,
         max_tokens=150,
         messages=messages,
@@ -117,7 +125,7 @@ async def _saudacao_novo_cliente(mensagem: str, trace=None) -> tuple[str, str | 
             ),
         },
     ]
-    completion = await _client.chat.completions.create(
+    completion = await _completion(
         model=settings.GROQ_MODEL,
         max_tokens=200,
         messages=messages,

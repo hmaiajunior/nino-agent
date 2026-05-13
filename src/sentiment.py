@@ -3,10 +3,17 @@
 import json
 import groq
 from src.config import settings
+from src.llm_retry import groq_retry
 from src.observability import new_trace
 from src.storage import store
 
 _client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
+_LLM_TIMEOUT = 20  # segundos
+
+
+@groq_retry
+async def _completion(**kwargs):
+    return await _client.chat.completions.create(timeout=_LLM_TIMEOUT, **kwargs)
 
 _SYSTEM = (
     "Analista de atendimento. Leia o histórico da conversa e classifique objetivamente. "
@@ -63,7 +70,7 @@ async def run_sentiment(numero_whatsapp: str) -> None:
 
     trace = new_trace("sentiment", user_id=numero_whatsapp, session_id=numero_whatsapp)
 
-    completion = await _client.chat.completions.create(
+    completion = await _completion(
         model=settings.GROQ_MODEL,
         max_tokens=400,
         messages=messages,
