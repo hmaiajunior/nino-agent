@@ -35,7 +35,10 @@ def build_wholesale_agent() -> Agent:
         llm=settings.WHOLESALE_MODEL,
         tools=[consultar_cliente, buscar_contexto_sessao, enviar_mensagem, enviar_catalogo, salvar_contexto_sessao, registrar_conversa],
         verbose=True,
-        max_iter=10,
+        # 5 iterações cobrem com folga o fluxo típico (consultar_cliente →
+        # enviar_mensagem → registrar_conversa). Reduzido de 10 para cortar
+        # custo em loops patológicos quando o LLM se confunde com tool errors.
+        max_iter=5,
     )
 
 

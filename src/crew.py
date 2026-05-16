@@ -7,8 +7,40 @@ from crewai import Crew, Task, Process
 import src.observability  # noqa: F401 — ativa litellm.success_callback para LangFuse
 from src.agents.agents import build_wholesale_agent, build_insight_agent
 from src.config import settings
+from src.llm_summary import resumir_historico
 from src.qualification import run_qualification
 from src.storage.store import buscar_sessao, merge_sessao
+
+
+# Janela deslizante: últimas N msgs no prompt; resumo cacheado das anteriores.
+# Reduz custo de tokens em conversas longas sem perder contexto histórico.
+_JANELA_RECENTES = 12   # nº de msgs recentes mantidas literais no prompt
+_LIMITE_RESUMO = 16     # acima disso, ativa o esquema com resumo
+_TRIGGER_REGERAR = 8    # regenera resumo quando histórico cresceu N msgs além do ponto resumido
+
+
+async def _montar_contexto_historico(numero: str, msgs_anteriores: list[dict], sessao: dict) -> str:
+    """Constrói o trecho de histórico para o prompt — janela + resumo se conversa longa."""
+    if not msgs_anteriores:
+        return ""
+    if len(msgs_anteriores) <= _LIMITE_RESUMO:
+        linhas = "\n".join(f"[{m['role'].upper()}] {m['text']}" for m in msgs_anteriores)
+        return f"\nHISTÓRICO ANTERIOR DA CONVERSA:\n{linhas}\n"
+
+    resumo = sessao.get("resumo_historico")
+    resumo_ate = sessao.get("resumo_ate_idx", 0)
+    antigas = msgs_anteriores[:-_JANELA_RECENTES]
+    precisa_regerar = (not resumo) or (len(antigas) - resumo_ate >= _TRIGGER_REGERAR)
+    if precisa_regerar:
+        resumo = await resumir_historico(antigas)
+        merge_sessao(numero, resumo_historico=resumo, resumo_ate_idx=len(antigas))
+
+    recentes = msgs_anteriores[-_JANELA_RECENTES:]
+    linhas = "\n".join(f"[{m['role'].upper()}] {m['text']}" for m in recentes)
+    return (
+        f"\nRESUMO DAS TROCAS ANTERIORES:\n{resumo}\n"
+        f"\nHISTÓRICO RECENTE:\n{linhas}\n"
+    )
 
 
 def _build_crew(agents, tasks):
@@ -38,10 +70,7 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     historico = sessao.get("historico", [])
     ultimo_idx = sessao.get("ultimo_processado_idx", 0)
     msgs_anteriores = historico[:ultimo_idx] if ultimo_idx > 0 else []
-    contexto_historico = ""
-    if msgs_anteriores:
-        linhas = "\n".join(f"[{m['role'].upper()}] {m['text']}" for m in msgs_anteriores)
-        contexto_historico = f"\nHISTÓRICO ANTERIOR DA CONVERSA:\n{linhas}\n"
+    contexto_historico = await _montar_contexto_historico(numero_whatsapp, msgs_anteriores, sessao)
 
     # Busca membro_grupo antecipadamente para não depender do agente chamar consultar_cliente
     from src.storage.store import buscar_cliente

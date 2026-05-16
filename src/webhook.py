@@ -129,7 +129,16 @@ async def _processar(numero: str, origem: str, delay: int):
         try:
             await run_atendimento(numero, mensagem_consolidada, origem)
             _garantir_conversa_registrada(numero)
-            await run_sentiment(numero)
+            # Gate de custo: só roda sentiment se houve resposta do agente e
+            # não estamos em modo humano. Em conversas só de áudio (humano
+            # assumiu) ou cliente que sumiu antes da resposta, evita 1 call
+            # Groq + 1 upsert Postgres sem ganho analítico.
+            sessao_pos = buscar_sessao(numero) or {}
+            tem_resposta_agente = any(
+                m.get("role") == "agente" for m in sessao_pos.get("historico", [])
+            )
+            if tem_resposta_agente and sessao_pos.get("modo") != "humano":
+                await run_sentiment(numero)
         except Exception:
             logger.exception("Erro no atendimento de %s", numero)
         finally:
