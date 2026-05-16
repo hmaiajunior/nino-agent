@@ -6,7 +6,7 @@ from src.config import settings
 from src.llm_retry import groq_retry
 from src.observability import new_trace
 from src.storage import store
-from src.whatsapp import enviar_whatsapp
+from src.whatsapp import enviar_whatsapp_async
 
 _client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
 _LLM_TIMEOUT = 20  # segundos
@@ -72,7 +72,7 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
             "origem": origem,
         }
 
-    enviar_whatsapp(numero_whatsapp, resposta)
+    await enviar_whatsapp_async(numero_whatsapp, resposta)
     store.append_historico(numero_whatsapp, {"role": "agente", "text": resposta})
     store.merge_sessao(numero_whatsapp, **contexto)
     store.salvar_mensagem_sessao(numero_whatsapp, "agente", text=resposta, type="text")

@@ -76,10 +76,19 @@ def salvar_conversa(dados: dict) -> int:
 
 
 def buscar_conversa_do_dia(numero_whatsapp: str) -> int | None:
-    """Retorna o id da conversa já aberta hoje para este número, ou None."""
+    """Retorna o id da conversa já aberta hoje para este número, ou None.
+
+    Usa fuso horário de São Paulo para evitar virada de dia errada quando o
+    container roda em UTC: conversa iniciada às 22h BRT cairia em 'amanhã'
+    se comparada contra CURRENT_DATE em UTC.
+    """
     with pg_cursor() as cur:
         cur.execute(
-            "SELECT id FROM conversas WHERE numero_whatsapp = %s AND DATE(iniciada_em) = CURRENT_DATE ORDER BY id DESC LIMIT 1",
+            """SELECT id FROM conversas
+               WHERE numero_whatsapp = %s
+                 AND (iniciada_em AT TIME ZONE 'America/Sao_Paulo')::date
+                     = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+               ORDER BY id DESC LIMIT 1""",
             (numero_whatsapp,),
         )
         row = cur.fetchone()
@@ -175,6 +184,23 @@ def salvar_mensagem_sessao(numero: str, role: str, text: str | None = None,
     sessao = buscar_sessao(numero) or {}
     conversa_id = sessao.get("conversa_id")
     salvar_mensagem(numero, role, text=text, type=type, media_id=media_id, conversa_id=conversa_id)
+
+
+def associar_mensagens_orfas(numero: str, conversa_id: int) -> int:
+    """Atribui conversa_id às mensagens do número que ainda estão com NULL.
+
+    Acontece naturalmente: a 1ª msg do cliente é gravada antes do agente
+    chamar registrar_conversa, então fica órfã. Esta função reconcilia
+    retroativamente para que relatórios contando por conversas.id capturem
+    tudo. Retorna o nº de linhas afetadas.
+    """
+    with pg_cursor() as cur:
+        cur.execute(
+            """UPDATE mensagens SET conversa_id = %s
+               WHERE numero_whatsapp = %s AND conversa_id IS NULL""",
+            (conversa_id, numero),
+        )
+        return cur.rowcount
 
 
 def buscar_mensagens(numero: str, limite: int = 500) -> list[dict]:
@@ -302,10 +328,25 @@ def encerrar_sessao(numero: str) -> None:
     redis_conn().delete(f"session:{numero}")
 
 
+def _set_session_payload(pipe, key: str, payload: str, ttl_seconds: int) -> None:
+    """Escreve a sessão preservando o TTL existente; usa setex só se chave nova.
+
+    Sem isso, qualquer write interno (tool gravando resposta, monitor polling,
+    merge de exec_id) renovaria o TTL, mantendo a sessão "ativa" para sempre.
+    O TTL só deve ser renovado em atividade real do cliente — ver
+    `renovar_ttl_sessao` chamada no webhook.
+    """
+    if pipe.exists(key):
+        pipe.set(key, payload, keepttl=True)
+    else:
+        pipe.setex(key, ttl_seconds, payload)
+
+
 def append_historico(numero: str, entrada: dict) -> int:
     """Append atômico ao historico da sessão via WATCH/MULTI/EXEC.
 
     Resolve a race condition do read-modify-write entre webhook e tool de envio.
+    Preserva TTL — só `renovar_ttl_sessao` estende a vida da sessão.
     Retorna o tamanho do histórico após o append.
     """
     key = f"session:{numero}"
@@ -316,12 +357,17 @@ def append_historico(numero: str, entrada: dict) -> int:
             try:
                 pipe.watch(key)
                 raw = pipe.get(key)
+                existia = raw is not None
                 sessao = json.loads(raw) if raw else {}
                 historico = sessao.get("historico", [])
                 historico.append(entrada)
                 sessao["historico"] = historico
+                payload = json.dumps(sessao, ensure_ascii=False)
                 pipe.multi()
-                pipe.setex(key, ttl, json.dumps(sessao, ensure_ascii=False))
+                if existia:
+                    pipe.set(key, payload, keepttl=True)
+                else:
+                    pipe.setex(key, ttl, payload)
                 pipe.execute()
                 return len(historico)
             except redis.WatchError:
@@ -330,7 +376,10 @@ def append_historico(numero: str, entrada: dict) -> int:
 
 
 def merge_sessao(numero: str, **campos) -> dict:
-    """Merge atômico de campos na sessão sem tocar no histórico (WATCH/MULTI/EXEC)."""
+    """Merge atômico de campos na sessão sem tocar no histórico (WATCH/MULTI/EXEC).
+
+    Preserva TTL — não renova a vida da sessão.
+    """
     key = f"session:{numero}"
     ttl = settings.SESSION_TIMEOUT_MINUTES * 60
     conn = redis_conn()
@@ -339,15 +388,31 @@ def merge_sessao(numero: str, **campos) -> dict:
             try:
                 pipe.watch(key)
                 raw = pipe.get(key)
+                existia = raw is not None
                 sessao = json.loads(raw) if raw else {}
                 sessao.update(campos)
+                payload = json.dumps(sessao, ensure_ascii=False)
                 pipe.multi()
-                pipe.setex(key, ttl, json.dumps(sessao, ensure_ascii=False))
+                if existia:
+                    pipe.set(key, payload, keepttl=True)
+                else:
+                    pipe.setex(key, ttl, payload)
                 pipe.execute()
                 return sessao
             except redis.WatchError:
                 continue
     raise RuntimeError(f"Falha ao merge sessão de {numero}: contenção excessiva")
+
+
+def renovar_ttl_sessao(numero: str) -> None:
+    """Renova o TTL da sessão para SESSION_TIMEOUT_MINUTES.
+
+    Chamar apenas quando há atividade real do cliente (webhook recebeu msg).
+    Operações internas (tools, monitor) devem usar append_historico/merge_sessao
+    que preservam o TTL existente.
+    """
+    ttl = settings.SESSION_TIMEOUT_MINUTES * 60
+    redis_conn().expire(f"session:{numero}", ttl)
 
 
 def msg_ja_processada(msg_id: str | None, ttl: int = 86400) -> bool:

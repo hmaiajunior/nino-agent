@@ -23,12 +23,14 @@ from src.storage.store import (
     liberar_lock_numero,
     merge_sessao,
     msg_ja_processada,
+    renovar_ttl_sessao,
     salvar_conversa,
     salvar_mensagem,
     salvar_mensagem_sessao,
 )
 
 from src.monitor import router as monitor_router
+from src.whatsapp import enviar_whatsapp
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="NinoAgent Webhook")
@@ -79,6 +81,9 @@ def _garantir_conversa_registrada(numero: str):
         })
         merge_sessao(numero, conversa_id=conversa_id)
         sessao["conversa_id"] = conversa_id
+
+    # Reconcilia mensagens órfãs (gravadas antes do conversa_id existir).
+    st.associar_mensagens_orfas(numero, conversa_id)
 
     if texto:
         st.indexar_conversa(
@@ -233,6 +238,7 @@ async def whatsapp_webhook(request: Request):
     if msg_type == "text":
         mensagem = msg["text"]["body"]
         append_historico(numero, {"role": "cliente", "text": mensagem})
+        renovar_ttl_sessao(numero)  # atividade real do cliente → estende sessão
         salvar_mensagem_sessao(numero, "cliente", text=mensagem, type="text")
 
         if numero in _tasks:
@@ -246,18 +252,28 @@ async def whatsapp_webhook(request: Request):
         media_info = msg.get(msg_type, {})
         media_id = media_info.get("id", "")
         labels = {"audio": "[áudio 🎵]", "video": "[vídeo 🎬]", "image": "[imagem 🖼️]", "document": "[arquivo 📎]"}
+        avisos = {
+            "audio": "Recebi seu áudio 🎵 Vou ouvir e te respondo em instantes.",
+            "video": "Recebi seu vídeo 🎬 Vou conferir e te respondo em instantes.",
+            "image": "Recebi sua imagem 🖼️ Vou conferir e te respondo em instantes.",
+            "document": "Recebi seu arquivo 📎 Vou conferir e te respondo em instantes.",
+        }
         texto_exibicao = labels.get(msg_type, f"[{msg_type}]")
 
         append_historico(numero, {"role": "cliente", "type": msg_type, "media_id": media_id, "text": texto_exibicao})
+        renovar_ttl_sessao(numero)  # atividade real do cliente → estende sessão
         salvar_mensagem_sessao(numero, "cliente", text=texto_exibicao, type=msg_type, media_id=media_id)
 
-        # Áudio → assume automaticamente (agente não processa áudio)
-        if msg_type == "audio":
-            _assumir_automatico(numero)
-            logger.info("Conversa %s assumida automaticamente por áudio recebido", numero)
-            return {"status": "assumido_automatico"}
-
-        return {"status": "midia_registrada"}
+        # Mídia → assume humano e responde com aviso. O agente não processa
+        # áudio/vídeo/imagem/documento; sem aviso, o cliente fica em silêncio
+        # até alguém abrir o monitor. Resolve B1 (mídia ignorada) e H4.
+        _assumir_automatico(numero)
+        aviso = avisos.get(msg_type, "Recebi sua mensagem! Em instantes te respondo.")
+        enviar_whatsapp(numero, aviso)
+        append_historico(numero, {"role": "agente", "text": aviso})
+        salvar_mensagem_sessao(numero, "agente", text=aviso, type="text")
+        logger.info("Conversa %s assumida automaticamente por %s recebido", numero, msg_type)
+        return {"status": "assumido_automatico", "type": msg_type}
 
     return {"status": "ignored"}
 

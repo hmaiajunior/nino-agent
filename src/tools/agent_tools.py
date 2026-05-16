@@ -100,6 +100,11 @@ class EnviarMensagemTool(BaseTool):
             r.raise_for_status()
             store.append_historico(numero, {"role": "agente", "text": texto})
             store.salvar_mensagem_sessao(numero, "agente", text=texto, type="text")
+            # B9: detecta envio do link do grupo e seta flag persistente.
+            # Mais robusto que escanear o histórico em cada turno (que falhava
+            # se o link no .env mudasse).
+            if settings.GRUPO_LINK and settings.GRUPO_LINK in texto:
+                store.merge_sessao(numero, grupo_convidado=True)
             return "mensagem_enviada"
         except httpx.HTTPStatusError as e:
             return f"erro_envio: {e} | body: {e.response.text}"
@@ -279,6 +284,18 @@ class EnviarCatalogTool(BaseTool):
             media_id = upload_resp.json()["id"]
         except Exception as e:
             return f"erro_upload: {e}"
+
+        # Defesa B6: limite de 1 catálogo por execução. Texto via enviar_mensagem
+        # continua permitido em paralelo — o agente pode mandar catálogo + 1 texto.
+        sessao = store.buscar_sessao(numero_whatsapp) or {}
+        exec_id = sessao.get("current_exec_id")
+        if exec_id:
+            r_conn = store.redis_conn()
+            chave = f"sent_catalog:{numero_whatsapp}:{exec_id}"
+            n = r_conn.incr(chave)
+            r_conn.expire(chave, 120)
+            if n > 1:
+                return "erro: enviar_catalogo ja foi chamado nesta execucao"
 
         # 2. Envia a mensagem usando media_id (não link público)
         to = numero_whatsapp if numero_whatsapp.startswith("+") else f"+{numero_whatsapp}"

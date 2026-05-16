@@ -76,10 +76,10 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     from src.storage.store import buscar_cliente
     cliente = buscar_cliente(numero_whatsapp)
     membro_grupo = cliente["membro_grupo"] if cliente else False
-    # Verifica se o convite ao grupo já foi enviado nesta conversa
-    historico_agente = [m["text"] for m in sessao.get("historico", []) if m.get("role") == "agente"]
+    # Flag persistente setada por EnviarMensagemTool quando o link é enviado.
+    # Mais robusto que escanear texto do histórico (que falha se o link muda no .env).
     grupo_link = settings.GRUPO_LINK
-    convite_ja_enviado = any(grupo_link and grupo_link in t for t in historico_agente)
+    convite_ja_enviado = bool(sessao.get("grupo_convidado"))
 
     if convite_ja_enviado or membro_grupo:
         encerramento = "Cliente já recebeu o convite ou já é membro — NÃO mencione o grupo novamente."
