@@ -35,7 +35,24 @@ app = FastAPI(title="NinoAgent Webhook")
 app.include_router(monitor_router, prefix="/monitor")
 
 _tasks: dict[str, asyncio.Task] = {}
-_DELAY = 30  # segundos
+
+# Debounce adaptativo: timer curto para msg única, estende em rajadas. Mantém
+# proteção contra responder no meio da rajada (cancel() durante sleep é confiável)
+# e elimina os 30s fixos como gargalo de UX.
+_BASE_DELAY = 5       # mensagem única: responde rápido
+_EXTEND_DELAY = 6     # extensão por mensagem adicional na rajada
+_MAX_DELAY = 18       # cap para não regredir ao bug do timer infinito
+
+
+def _calcular_delay(numero: str) -> int:
+    """Calcula delay baseado em quantas mensagens do cliente estão pendentes."""
+    sessao = buscar_sessao(numero) or {}
+    historico = sessao.get("historico", [])
+    ultimo_idx = sessao.get("ultimo_processado_idx", 0)
+    pendentes = sum(1 for m in historico[ultimo_idx:] if m.get("role") == "cliente")
+    if pendentes <= 1:
+        return _BASE_DELAY
+    return min(_MAX_DELAY, _BASE_DELAY + _EXTEND_DELAY * (pendentes - 1))
 
 
 def _garantir_conversa_registrada(numero: str):
@@ -76,11 +93,11 @@ def _garantir_conversa_registrada(numero: str):
         )
 
 
-async def _processar(numero: str, origem: str):
+async def _processar(numero: str, origem: str, delay: int):
     try:
-        await asyncio.sleep(_DELAY)
+        await asyncio.sleep(delay)
     except asyncio.CancelledError:
-        return  # nova mensagem chegou antes dos 30s, timer reiniciado
+        return  # nova mensagem chegou antes do timer, timer reiniciado
 
     _tasks.pop(numero, None)
 
@@ -211,8 +228,9 @@ async def whatsapp_webhook(request: Request):
 
         if numero in _tasks:
             _tasks[numero].cancel()
-        _tasks[numero] = asyncio.create_task(_processar(numero, origem))
-        return {"status": "aguardando"}
+        delay = _calcular_delay(numero)
+        _tasks[numero] = asyncio.create_task(_processar(numero, origem, delay))
+        return {"status": "aguardando", "delay": delay}
 
     if msg_type in ("audio", "video", "image", "document"):
         # Extrai o media_id do campo específico do tipo

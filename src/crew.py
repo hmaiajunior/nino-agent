@@ -1,5 +1,6 @@
 """Orquestração principal do NinoAgent."""
 
+import uuid
 from datetime import date
 from crewai import Crew, Task, Process
 
@@ -7,7 +8,7 @@ import src.observability  # noqa: F401 — ativa litellm.success_callback para L
 from src.agents.agents import build_wholesale_agent, build_insight_agent
 from src.config import settings
 from src.qualification import run_qualification
-from src.storage.store import buscar_sessao
+from src.storage.store import buscar_sessao, merge_sessao
 
 
 def _build_crew(agents, tasks):
@@ -26,6 +27,12 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
         return "qualificado"
 
     tipo = sessao.get("tipo_cliente", "atacado")
+
+    # Defesa em código contra dupla `enviar_mensagem` por turno: gera um exec_id
+    # que `EnviarMensagemTool` usa como contador no Redis. Se o LLM tentar chamar
+    # duas vezes, a 2ª chamada é bloqueada antes de tocar a Meta API.
+    exec_id = uuid.uuid4().hex
+    merge_sessao(numero_whatsapp, current_exec_id=exec_id)
 
     # Histórico anterior (exceto as msgs novas que já vêm em `mensagem`)
     historico = sessao.get("historico", [])

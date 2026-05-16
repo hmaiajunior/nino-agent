@@ -69,6 +69,19 @@ class EnviarMensagemTool(BaseTool):
     description: str = "Envia mensagem de texto via WhatsApp (Meta API oficial)."
 
     def _run(self, numero: str, texto: str) -> str:
+        # Defesa em código contra LLM chamando enviar_mensagem 2x no mesmo turno
+        # (bug histórico de 02/05). crew.py grava `current_exec_id` na sessão a
+        # cada turno; aqui usamos INCR atômico no Redis com TTL curto.
+        sessao = store.buscar_sessao(numero) or {}
+        exec_id = sessao.get("current_exec_id")
+        if exec_id:
+            r_conn = store.redis_conn()
+            chave = f"sent:{numero}:{exec_id}"
+            n = r_conn.incr(chave)
+            r_conn.expire(chave, 120)
+            if n > 1:
+                return "erro: enviar_mensagem ja foi chamado nesta execucao; envie tudo em uma unica chamada"
+
         to = numero if numero.startswith("+") else f"+{numero}"
         texto = texto.encode("utf-8", errors="ignore").decode("utf-8")
         url = f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
