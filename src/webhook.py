@@ -20,6 +20,7 @@ from src.storage.store import (
     append_historico,
     buscar_conversa_do_dia,
     buscar_sessao,
+    consumir_rate_limit,
     liberar_lock_numero,
     merge_sessao,
     msg_ja_processada,
@@ -265,6 +266,27 @@ async def whatsapp_webhook(request: Request):
         # H2: marca como lida imediatamente — cliente vê ✓✓ azul mesmo durante
         # o debounce. Fire-and-forget para não atrasar o ACK ao webhook.
         asyncio.create_task(marcar_como_lida(msg_id))
+
+        # C3: rate limit por número. Ao estourar o teto na janela, escala
+        # SILENCIOSAMENTE para humano (sem aviso ao cliente). O agente para
+        # de responder; o atendente vê tudo no monitor e decide se devolve.
+        # Pula se já está em humano (humano pode receber qualquer volume).
+        sessao_atual = buscar_sessao(numero) or {}
+        if sessao_atual.get("modo") != "humano":
+            dentro, contagem = consumir_rate_limit(
+                numero, settings.RATE_LIMIT_TETO, settings.RATE_LIMIT_JANELA_S,
+            )
+            if not dentro:
+                merge_sessao(numero, modo="humano")
+                # Cancela task pendente — agente não deve responder
+                if numero in _tasks:
+                    _tasks[numero].cancel()
+                    _tasks.pop(numero, None)
+                logger.warning(
+                    "Rate limit: %s estourou (%s msgs / %ss) — escalado p/ humano",
+                    numero, contagem, settings.RATE_LIMIT_JANELA_S,
+                )
+                return {"status": "rate_limit_escalado", "contagem": contagem}
 
         if numero in _tasks:
             _tasks[numero].cancel()

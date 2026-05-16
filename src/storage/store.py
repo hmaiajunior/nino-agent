@@ -450,6 +450,20 @@ def liberar_lock_numero(numero: str) -> None:
     redis_conn().delete(f"session:lock:{numero}")
 
 
+def consumir_rate_limit(numero: str, teto: int, janela_s: int) -> tuple[bool, int]:
+    """Janela deslizante de mensagens por número via INCR + EXPIRE.
+
+    Retorna (dentro_do_teto, contagem_atual). Quando a chave é criada,
+    seta o TTL — a contagem zera após `janela_s` sem novas mensagens.
+    """
+    chave = f"rl:msg:{numero}"
+    r = redis_conn()
+    n = r.incr(chave)
+    if n == 1:
+        r.expire(chave, janela_s)
+    return (n <= teto, n)
+
+
 def listar_sessoes_ativas() -> list[dict]:
     """Retorna todas as sessões Redis ativas (prefixo session:*)."""
     r = redis_conn()

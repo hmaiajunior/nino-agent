@@ -82,5 +82,11 @@ class Settings:
 
     SESSION_TIMEOUT_MINUTES: int = int(os.getenv("SESSION_TIMEOUT_MINUTES", 30))
 
+    # Rate limit por número: ao estourar, a conversa é escalada para humano
+    # silenciosamente (sem aviso ao cliente). Atendente vê tudo no monitor e
+    # decide se devolve ao agente ou segue manual.
+    RATE_LIMIT_TETO: int = int(os.getenv("RATE_LIMIT_TETO", 15))
+    RATE_LIMIT_JANELA_S: int = int(os.getenv("RATE_LIMIT_JANELA_S", 60))
+
 
 settings = Settings()
