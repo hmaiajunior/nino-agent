@@ -232,9 +232,26 @@ class BuscarTemasRecorrentesTool(BaseTool):
 
 class EnviarCatalogTool(BaseTool):
     name: str = "enviar_catalogo"
-    description: str = "Busca o PDF mais recente na pasta de catálogo do Google Drive e envia ao cliente via WhatsApp."
+    description: str = (
+        "Envia o catálogo de atacado (PDF) ao cliente via WhatsApp. "
+        "EXCLUSIVO para clientes atacado (lojistas) — tem preços de atacado. "
+        "Para varejo, recusa com instrução de cadastro de revendedor."
+    )
 
     def _run(self, numero_whatsapp: str) -> str:
+        # O3: defesa em código contra envio para varejo. O catálogo tem preços
+        # de atacado e cadastro de revendedor é o caminho para varejo virar atacado.
+        sessao = store.buscar_sessao(numero_whatsapp) or {}
+        if sessao.get("tipo_cliente") == "varejo":
+            return (
+                "recusado_varejo: cliente é VAREJO. NÃO envie o catálogo. "
+                "Em vez disso, chame enviar_mensagem explicando que o catálogo é "
+                "exclusivo para lojistas (tem preços de atacado), que ele pode ver "
+                f"todos os produtos no site {settings.SITE_URL}, e que se quiser "
+                "comprar com preço de atacado precisa fazer o cadastro de revendedor "
+                "no site. A análise leva até 48h, mas geralmente sai bem antes."
+            )
+
         from io import BytesIO
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
