@@ -556,10 +556,19 @@ def detalhar_conversa(numero: str, _=Depends(_token)):
 
 @router.post("/conversas/{numero}/assumir")
 def assumir_conversa(numero: str, _=Depends(_token)):
-    """Ativa modo humano: pausa o agente para esta conversa."""
+    """Ativa modo humano: pausa o agente para esta conversa e avisa o cliente."""
     if not store.buscar_sessao(numero):
         raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
     store.merge_sessao(numero, modo="humano")
+
+    # H7: avisa o cliente da troca para que ele perceba que mudou de robô
+    # para pessoa. Diferentemente do _assumir_automatico (mídia), aqui a
+    # ação foi explícita do humano — vale dar a boas-vindas.
+    aviso = f"Oi! Aqui é o time {settings.ATENDENTE_NOME}, vou continuar daqui pessoalmente 🙋"
+    enviar_whatsapp(numero, aviso)
+    store.append_historico(numero, {"role": "humano", "text": aviso})
+    store.salvar_mensagem_sessao(numero, "humano", text=aviso, type="text")
+
     return {"status": "assumido", "numero": numero}
 
 

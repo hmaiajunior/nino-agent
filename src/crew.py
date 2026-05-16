@@ -19,28 +19,59 @@ _LIMITE_RESUMO = 16     # acima disso, ativa o esquema com resumo
 _TRIGGER_REGERAR = 8    # regenera resumo quando histórico cresceu N msgs além do ponto resumido
 
 
+async def _resumo_de_conversas_antigas(numero: str, sessao: dict) -> str:
+    """H6 — Resumo de interações anteriores (sessões já encerradas).
+
+    Cliente que volta após dias deve perceber que somos contínuos. Persistido
+    em `contexto_anterior` da sessão: regerado só uma vez por sessão Redis.
+    """
+    if "contexto_anterior" in sessao:
+        return sessao["contexto_anterior"] or ""
+    from src.storage.store import buscar_mensagens
+    total = buscar_mensagens(numero, limite=200)
+    n_atual = len(sessao.get("historico", []))
+    n_antigas = max(0, len(total) - n_atual)
+    antigas = total[:n_antigas]
+    if len(antigas) >= 4:
+        antigas_fmt = [{"role": m["role"], "text": m.get("text", "")} for m in antigas if m.get("text")]
+        resumo = await resumir_historico(antigas_fmt) if antigas_fmt else ""
+    else:
+        resumo = ""
+    merge_sessao(numero, contexto_anterior=resumo)
+    return resumo
+
+
 async def _montar_contexto_historico(numero: str, msgs_anteriores: list[dict], sessao: dict) -> str:
-    """Constrói o trecho de histórico para o prompt — janela + resumo se conversa longa."""
-    if not msgs_anteriores:
-        return ""
-    if len(msgs_anteriores) <= _LIMITE_RESUMO:
-        linhas = "\n".join(f"[{m['role'].upper()}] {m['text']}" for m in msgs_anteriores)
-        return f"\nHISTÓRICO ANTERIOR DA CONVERSA:\n{linhas}\n"
+    """Constrói o trecho de histórico para o prompt — H6 (conversas anteriores) + H9 (janela)."""
+    partes: list[str] = []
 
-    resumo = sessao.get("resumo_historico")
-    resumo_ate = sessao.get("resumo_ate_idx", 0)
-    antigas = msgs_anteriores[:-_JANELA_RECENTES]
-    precisa_regerar = (not resumo) or (len(antigas) - resumo_ate >= _TRIGGER_REGERAR)
-    if precisa_regerar:
-        resumo = await resumir_historico(antigas)
-        merge_sessao(numero, resumo_historico=resumo, resumo_ate_idx=len(antigas))
+    # H6 — conversas anteriores (de antes da sessão atual)
+    contexto_anterior = await _resumo_de_conversas_antigas(numero, sessao)
+    if contexto_anterior:
+        partes.append(
+            "ESTE CLIENTE JÁ CONVERSOU COM VOCÊ ANTES. "
+            "Resumo das interações passadas: " + contexto_anterior +
+            " NÃO recomece a apresentação — retome de onde parou."
+        )
 
-    recentes = msgs_anteriores[-_JANELA_RECENTES:]
-    linhas = "\n".join(f"[{m['role'].upper()}] {m['text']}" for m in recentes)
-    return (
-        f"\nRESUMO DAS TROCAS ANTERIORES:\n{resumo}\n"
-        f"\nHISTÓRICO RECENTE:\n{linhas}\n"
-    )
+    # H9 — janela da sessão atual
+    if msgs_anteriores:
+        if len(msgs_anteriores) <= _LIMITE_RESUMO:
+            linhas = "\n".join(f"[{m['role'].upper()}] {m['text']}" for m in msgs_anteriores)
+            partes.append("HISTÓRICO ANTERIOR DA CONVERSA:\n" + linhas)
+        else:
+            resumo = sessao.get("resumo_historico")
+            resumo_ate = sessao.get("resumo_ate_idx", 0)
+            antigas = msgs_anteriores[:-_JANELA_RECENTES]
+            precisa_regerar = (not resumo) or (len(antigas) - resumo_ate >= _TRIGGER_REGERAR)
+            if precisa_regerar:
+                resumo = await resumir_historico(antigas)
+                merge_sessao(numero, resumo_historico=resumo, resumo_ate_idx=len(antigas))
+            recentes = msgs_anteriores[-_JANELA_RECENTES:]
+            linhas = "\n".join(f"[{m['role'].upper()}] {m['text']}" for m in recentes)
+            partes.append("RESUMO DAS TROCAS ANTERIORES:\n" + resumo + "\nHISTÓRICO RECENTE:\n" + linhas)
+
+    return ("\n\n".join(partes) + "\n") if partes else ""
 
 
 def _build_crew(agents, tasks):
@@ -76,6 +107,9 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     from src.storage.store import buscar_cliente
     cliente = buscar_cliente(numero_whatsapp)
     membro_grupo = cliente["membro_grupo"] if cliente else False
+    # Nome do cliente: prioriza nome cadastrado em `clientes`, cai para o nome
+    # do perfil Meta (capturado pelo webhook em H1) se não houver cadastro.
+    nome_cliente = (cliente["nome"] if cliente else None) or sessao.get("nome_perfil")
     # Flag persistente setada por EnviarMensagemTool quando o link é enviado.
     # Mais robusto que escanear texto do histórico (que falha se o link muda no .env).
     grupo_link = settings.GRUPO_LINK
@@ -91,11 +125,12 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
         )
 
     wholesale = build_wholesale_agent()
+    nome_trecho = f", nome={nome_cliente}" if nome_cliente else ""
     task_wholesale = Task(
         description=(
             f"Nova mensagem do cliente {numero_whatsapp}: '{mensagem}'\n"
             f"Contexto: tipo={tipo}, recorrente={sessao.get('cliente_recorrente', False)}, "
-            f"origem={sessao.get('origem', 'organico')}, membro_grupo={membro_grupo}."
+            f"origem={sessao.get('origem', 'organico')}, membro_grupo={membro_grupo}{nome_trecho}."
             f"{contexto_historico}\n"
             "\nREGRAS DE RESPOSTA:\n"
             "- NÃO se apresente. NÃO pergunte se é lojista — já foi qualificado.\n"

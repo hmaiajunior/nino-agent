@@ -27,11 +27,12 @@ from src.storage.store import (
     salvar_conversa,
     salvar_mensagem,
     salvar_mensagem_sessao,
+    upsert_cliente_perfil,
 )
 
 from src.horario import aviso_horario_se_fora
 from src.monitor import router as monitor_router
-from src.whatsapp import enviar_whatsapp
+from src.whatsapp import enviar_whatsapp, marcar_como_lida
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="NinoAgent Webhook")
@@ -129,8 +130,18 @@ async def _processar(numero: str, origem: str, delay: int):
         if not msgs_novas:
             return
 
-        mensagem_consolidada = " ".join(msgs_novas)
+        # Separa msgs do cliente com \n em vez de espaço: o LLM percebe que
+        # foram turnos distintos do cliente e não trata como uma frase só.
+        mensagem_consolidada = "\n".join(msgs_novas)
         merge_sessao(numero, ultimo_processado_idx=len(historico))
+
+        # H2: sinaliza "digitando…" antes de chamar o LLM. A Meta API combina
+        # read receipt + typing no mesmo POST; aqui só typing porque o read já
+        # foi disparado no recebimento. Vale por ~25s, o que cobre quase todo
+        # atendimento típico (LLM + envio < 5s).
+        ultimo_msg_id = sessao.get("ultimo_msg_id")
+        if ultimo_msg_id:
+            asyncio.create_task(marcar_como_lida(ultimo_msg_id, typing=True))
 
         try:
             await run_atendimento(numero, mensagem_consolidada, origem)
@@ -220,7 +231,15 @@ async def whatsapp_webhook(request: Request):
         msg_id = msg.get("id")
         msg_type = msg.get("type")
         numero = _normalizar_numero(msg["from"])
-        origem = changes.get("contacts", [{}])[0].get("profile", {}).get("name", "organico")
+        # Separa nome do contato (vem grátis no payload Meta) da origem da
+        # conversa. Antes do fix de H1, o nome ia para a coluna `origem` por
+        # engano. Origem real só conhecemos via contexto externo (campanha).
+        contato = changes.get("contacts", [{}])[0]
+        nome_perfil = (contato.get("profile") or {}).get("name") or None
+        origem = "organico"
+        if nome_perfil:
+            upsert_cliente_perfil(numero, nome_perfil)
+            merge_sessao(numero, nome_perfil=nome_perfil)
 
         # Idempotência: a Meta reenvia a mesma mensagem se não receber 200 a tempo.
         # SET NX com TTL de 24h é suficiente — após esse prazo o ID é descartado pela Meta.
@@ -240,7 +259,12 @@ async def whatsapp_webhook(request: Request):
         mensagem = msg["text"]["body"]
         append_historico(numero, {"role": "cliente", "text": mensagem})
         renovar_ttl_sessao(numero)  # atividade real do cliente → estende sessão
+        merge_sessao(numero, ultimo_msg_id=msg_id)  # usado por _processar para typing indicator
         salvar_mensagem_sessao(numero, "cliente", text=mensagem, type="text")
+
+        # H2: marca como lida imediatamente — cliente vê ✓✓ azul mesmo durante
+        # o debounce. Fire-and-forget para não atrasar o ACK ao webhook.
+        asyncio.create_task(marcar_como_lida(msg_id))
 
         if numero in _tasks:
             _tasks[numero].cancel()
@@ -263,7 +287,12 @@ async def whatsapp_webhook(request: Request):
 
         append_historico(numero, {"role": "cliente", "type": msg_type, "media_id": media_id, "text": texto_exibicao})
         renovar_ttl_sessao(numero)  # atividade real do cliente → estende sessão
+        merge_sessao(numero, ultimo_msg_id=msg_id)
         salvar_mensagem_sessao(numero, "cliente", text=texto_exibicao, type=msg_type, media_id=media_id)
+
+        # H2: marca como lida imediatamente. Sem typing porque vamos escalar
+        # para humano — o aviso textual cobre a expectativa.
+        asyncio.create_task(marcar_como_lida(msg_id))
 
         # Mídia → assume humano e responde com aviso. O agente não processa
         # áudio/vídeo/imagem/documento; sem aviso, o cliente fica em silêncio

@@ -18,7 +18,7 @@ async def _completion(**kwargs):
     return await _client.chat.completions.create(timeout=_LLM_TIMEOUT, **kwargs)
 
 _SYSTEM = (
-    "Você é a Ana da PlayBeKids, loja de moda masculina infantil (0-12 anos). "
+    "Você é a Bia da PlayBeKids, loja de moda masculina infantil (0-12 anos). "
     "Responda de forma curta e natural, como uma atendente simpática no WhatsApp. "
     "Nunca mencione preços, produtos ou condições. Máximo 2 linhas por mensagem."
 )
@@ -51,10 +51,12 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
     """Qualifica cliente, envia saudação e salva contexto no Redis."""
     trace = new_trace("qualification", user_id=numero_whatsapp, session_id=numero_whatsapp)
     cliente = store.buscar_cliente(numero_whatsapp)
+    sessao_atual = store.buscar_sessao(numero_whatsapp) or {}
+    nome_perfil = sessao_atual.get("nome_perfil")
 
     if cliente:
         resposta = await _saudacao_cliente_conhecido(
-            nome=cliente["nome"],
+            nome=cliente["nome"] or nome_perfil,
             tipo=cliente["tipo"],
             mensagem=mensagem,
             trace=trace,
@@ -65,7 +67,9 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
             "origem": origem,
         }
     else:
-        resposta, tipo_detectado = await _saudacao_novo_cliente(mensagem, trace=trace)
+        resposta, tipo_detectado = await _saudacao_novo_cliente(
+            mensagem, nome_perfil=nome_perfil, trace=trace,
+        )
         contexto = {
             "tipo_cliente": tipo_detectado,
             "cliente_recorrente": False,
@@ -111,14 +115,20 @@ async def _saudacao_cliente_conhecido(nome: str, tipo: str, mensagem: str, trace
     return output
 
 
-async def _saudacao_novo_cliente(mensagem: str, trace=None) -> tuple[str, str | None]:
+async def _saudacao_novo_cliente(mensagem: str, nome_perfil: str | None = None, trace=None) -> tuple[str, str | None]:
     """Retorna (resposta_para_enviar, tipo_detectado | None)."""
+    instrucao_nome = (
+        f"O nome do cliente no perfil WhatsApp é '{nome_perfil}' — use na saudação. "
+        if nome_perfil else
+        "Não use nome próprio na saudação (o cliente não se apresentou)."
+    )
     messages = [
         {"role": "system", "content": _SYSTEM},
         {
             "role": "user",
             "content": (
                 f"Novo cliente enviou: '{mensagem}'. "
+                f"{instrucao_nome}"
                 "Se a mensagem deixar claro se é lojista ou consumidor final, registre o tipo. "
                 "Envie uma saudação de boas-vindas à PlayBeKids e, se o tipo for indefinido, "
                 "pergunte diretamente se é lojista ou consumidor final."

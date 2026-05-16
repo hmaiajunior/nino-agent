@@ -46,3 +46,33 @@ async def enviar_whatsapp_async(numero: str, texto: str) -> None:
         logger.error("Falha ao enviar WhatsApp para %s: HTTP %s — %s", numero, e.response.status_code, e.response.text)
     except Exception as e:
         logger.error("Falha ao enviar WhatsApp para %s: %s", numero, e)
+
+
+async def marcar_como_lida(msg_id: str, typing: bool = False) -> None:
+    """Marca a msg do cliente como lida (✓✓ azul) e opcionalmente sinaliza 'digitando…'.
+
+    A Meta combina os dois eventos no mesmo POST. O typing indicator é válido
+    por ~25s; expira automaticamente se uma mensagem for enviada antes.
+    Fire-and-forget — qualquer erro é apenas logado.
+    """
+    if not msg_id:
+        return
+    url = f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
+    body = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": msg_id,
+    }
+    if typing:
+        body["typing_indicator"] = {"type": "text"}
+    headers = {
+        "Authorization": f"Bearer {settings.WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.post(url, json=body, headers=headers)
+            r.raise_for_status()
+    except Exception as e:
+        # Não vale a pena ruidar o atendimento por falha em UX adornment
+        logger.debug("Falha em marcar_como_lida(%s, typing=%s): %s", msg_id, typing, e)

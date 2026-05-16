@@ -41,6 +41,24 @@ def pg_cursor():
         conn.close()
 
 
+def upsert_cliente_perfil(numero_whatsapp: str, nome: str | None) -> None:
+    """Garante registro do cliente com nome do perfil Meta.
+
+    Insere se não existe; só atualiza `nome` se a coluna ainda está vazia,
+    para não sobrescrever nome digitado manualmente pelo lojista.
+    """
+    if not nome:
+        return
+    with pg_cursor() as cur:
+        cur.execute(
+            """INSERT INTO clientes (numero_whatsapp, nome)
+               VALUES (%s, %s)
+               ON CONFLICT (numero_whatsapp) DO UPDATE
+               SET nome = COALESCE(clientes.nome, EXCLUDED.nome)""",
+            (numero_whatsapp, nome),
+        )
+
+
 def buscar_cliente(numero_whatsapp: str) -> dict | None:
     with pg_cursor() as cur:
         cur.execute(

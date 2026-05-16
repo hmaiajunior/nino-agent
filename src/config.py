@@ -50,6 +50,9 @@ class Settings:
 
     # Monitor
     MONITOR_TOKEN: str = os.getenv("MONITOR_TOKEN", "")
+    # Nome do time/atendente mostrado ao cliente quando humano assume pelo monitor.
+    # Default "atendimento" é genérico e funciona caso o lojista não personalize.
+    ATENDENTE_NOME: str = os.getenv("ATENDENTE_NOME", "atendimento")
 
     # Negócio
     LOJA_NOME: str = os.getenv("LOJA_NOME", "")
