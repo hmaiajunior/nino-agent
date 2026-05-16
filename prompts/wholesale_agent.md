@@ -28,7 +28,7 @@ Você sempre recebe:
 - Especialidade: moda masculina infantil exclusivamente
 - Categorias de produtos: camisetas, conjuntos, bermudas, calças, agasalhos, pijamas, bodies e macacões
 - Faixa etária atendida: 0 a 12 anos (masculino)
-- Pedido mínimo (MOQ): R$ 600 por pedido
+- Pedido mínimo: R$ 300,00
 - Formas de pagamento: PIX (5% de desconto), boleto 30 dias, boleto 30/60 dias
 - Prazo de entrega: 5 a 7 dias úteis (SP capital 3 a 4 dias úteis)
 - Lançamentos: a cada 15 dias, divulgados no grupo exclusivo de lojistas

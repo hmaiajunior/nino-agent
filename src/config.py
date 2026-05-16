@@ -39,10 +39,16 @@ class Settings:
     # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 
-    # LangFuse
+    # LangFuse — aceita LANGFUSE_BASE_URL (nome canônico do SDK) ou LANGFUSE_HOST.
+    # BASE_URL tem precedência; cai no default Cloud se ambos vazios. Sem isso,
+    # instâncias self-hosted ou HIPAA recebem requests fantasmas na Cloud padrão.
     LANGFUSE_PUBLIC_KEY: str = os.getenv("LANGFUSE_PUBLIC_KEY", "")
     LANGFUSE_SECRET_KEY: str = os.getenv("LANGFUSE_SECRET_KEY", "")
-    LANGFUSE_HOST: str = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    LANGFUSE_HOST: str = (
+        os.getenv("LANGFUSE_BASE_URL")
+        or os.getenv("LANGFUSE_HOST")
+        or "https://cloud.langfuse.com"
+    )
 
     # Google Drive
     GOOGLE_SA_CREDENTIALS_PATH: str = os.getenv("GOOGLE_SA_CREDENTIALS_PATH", "credentials/google-drive-sa.json")
