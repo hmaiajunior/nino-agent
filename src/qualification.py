@@ -1,12 +1,46 @@
 """Qualificação de cliente — chamada direta ao Groq (Llama), sem CrewAI."""
 
 import json
+import re
 import groq
 from src.config import settings
 from src.llm_retry import groq_retry
 from src.observability import new_trace
 from src.storage import store
-from src.whatsapp import enviar_whatsapp_async
+from src.whatsapp import enviar_botoes, enviar_whatsapp_async
+
+
+# Mensagens vagas demais para classificar: usamos botões em vez de gastar LLM
+# e arriscar erro de classificação. Cobre saudações secas e "?".
+_RE_MSG_VAGA = re.compile(
+    r"^\s*(oi+|olá+|ola+|hello+|hi+|hey+|"
+    r"bom\s+dia|boa\s+tarde|boa\s+noite|"
+    r"\?+|\.+)\s*[!?.]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _eh_mensagem_vaga(mensagem: str) -> bool:
+    return bool(_RE_MSG_VAGA.match(mensagem or ""))
+
+
+async def _enviar_qualificacao_botoes(numero: str, nome_perfil: str | None) -> None:
+    saudacao_nome = f", {nome_perfil}" if nome_perfil else ""
+    texto = (
+        f"Olá{saudacao_nome}! Seja bem-vindo(a) à PlayBeKids 👶🏻👕 "
+        f"Sou a Bia. Pra te direcionar certinho:"
+    )
+    await enviar_botoes(
+        numero,
+        texto,
+        [
+            {"id": "qual:atacado", "title": "Sou lojista"},
+            {"id": "qual:varejo", "title": "Compra própria"},
+        ],
+    )
+    # Registra a saudação no histórico para o monitor mostrar contexto
+    store.append_historico(numero, {"role": "agente", "text": texto + " [botões: Sou lojista | Compra própria]"})
+    store.salvar_mensagem_sessao(numero, "agente", text=texto, type="text")
 
 _client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
 _LLM_TIMEOUT = 20  # segundos
@@ -53,6 +87,19 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
     cliente = store.buscar_cliente(numero_whatsapp)
     sessao_atual = store.buscar_sessao(numero_whatsapp) or {}
     nome_perfil = sessao_atual.get("nome_perfil")
+
+    # H5: cliente novo + mensagem vaga ("oi", "olá"…) → envia botões. Evita
+    # 1 chamada Groq e classifica sem ambiguidade. Mensagens já específicas
+    # ("quero atacado", "tem catálogo?") seguem pelo caminho LLM normal.
+    if not cliente and _eh_mensagem_vaga(mensagem):
+        await _enviar_qualificacao_botoes(numero_whatsapp, nome_perfil)
+        store.merge_sessao(
+            numero_whatsapp,
+            aguardando_qualificacao=True,
+            origem=origem,
+            cliente_recorrente=False,
+        )
+        return {"aguardando_botao": True}
 
     if cliente:
         resposta = await _saudacao_cliente_conhecido(

@@ -48,6 +48,45 @@ async def enviar_whatsapp_async(numero: str, texto: str) -> None:
         logger.error("Falha ao enviar WhatsApp para %s: %s", numero, e)
 
 
+async def enviar_botoes(numero: str, texto: str, botoes: list[dict]) -> None:
+    """Envia mensagem interativa com botões de resposta rápida (Meta API).
+
+    botoes: lista de até 3 dicts no formato {"id": str, "title": str}. Cada
+    `title` tem limite de 20 caracteres (regra da Meta). Quando o cliente
+    toca um botão, o webhook recebe um evento `interactive.button_reply`
+    com o `id` enviado aqui.
+    """
+    to = numero if numero.startswith("+") else f"+{numero}"
+    url = f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
+    body = {
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": texto},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": b["id"], "title": b["title"]}}
+                    for b in botoes
+                ]
+            },
+        },
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(url, json=body, headers=headers)
+            r.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.error("Falha enviar_botoes %s: HTTP %s — %s", numero, e.response.status_code, e.response.text)
+    except Exception as e:
+        logger.error("Falha enviar_botoes %s: %s", numero, e)
+
+
 async def marcar_como_lida(msg_id: str, typing: bool = False) -> None:
     """Marca a msg do cliente como lida (✓✓ azul) e opcionalmente sinaliza 'digitando…'.
 

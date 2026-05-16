@@ -272,6 +272,46 @@ async def whatsapp_webhook(request: Request):
         _tasks[numero] = asyncio.create_task(_processar(numero, origem, delay))
         return {"status": "aguardando", "delay": delay}
 
+    if msg_type == "interactive":
+        # H5: clique em botão da qualificação. button_reply.id traz o código
+        # enviado em enviar_botoes (qual:atacado / qual:varejo). Atalho que
+        # economiza chamada de LLM e elimina erro de classificação.
+        interactive = msg.get("interactive", {})
+        button = interactive.get("button_reply") or {}
+        button_id = button.get("id", "")
+        title = button.get("title", "[botão]")
+
+        append_historico(numero, {"role": "cliente", "text": f"[clique: {title}]"})
+        renovar_ttl_sessao(numero)
+        merge_sessao(numero, ultimo_msg_id=msg_id)
+        salvar_mensagem_sessao(numero, "cliente", text=f"[clique: {title}]", type="text")
+        asyncio.create_task(marcar_como_lida(msg_id))
+
+        if button_id == "qual:atacado":
+            merge_sessao(numero, tipo_cliente="atacado",
+                         cliente_recorrente=False, aguardando_qualificacao=None)
+            ack = "Perfeito! Em que posso te ajudar? 😊"
+            enviar_whatsapp(numero, ack)
+            append_historico(numero, {"role": "agente", "text": ack})
+            salvar_mensagem_sessao(numero, "agente", text=ack, type="text")
+            return {"status": "qualificado_via_botao", "tipo": "atacado"}
+
+        if button_id == "qual:varejo":
+            merge_sessao(numero, tipo_cliente="varejo",
+                         cliente_recorrente=False, aguardando_qualificacao=None)
+            despedida = (
+                "Que pena! No momento trabalhamos só com atacado. "
+                "Mas se você tiver lojinha ou conhecer alguém que tenha, "
+                "é só chamar 😊"
+            )
+            enviar_whatsapp(numero, despedida)
+            append_historico(numero, {"role": "agente", "text": despedida})
+            salvar_mensagem_sessao(numero, "agente", text=despedida, type="text")
+            return {"status": "varejo_descartado_via_botao"}
+
+        logger.warning("Botão desconhecido %s de %s", button_id, numero)
+        return {"status": "ignored_interactive"}
+
     if msg_type in ("audio", "video", "image", "document"):
         # Extrai o media_id do campo específico do tipo
         media_info = msg.get(msg_type, {})
