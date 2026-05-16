@@ -29,6 +29,7 @@ from src.storage.store import (
     salvar_mensagem_sessao,
 )
 
+from src.horario import aviso_horario_se_fora
 from src.monitor import router as monitor_router
 from src.whatsapp import enviar_whatsapp
 
@@ -267,8 +268,11 @@ async def whatsapp_webhook(request: Request):
         # Mídia → assume humano e responde com aviso. O agente não processa
         # áudio/vídeo/imagem/documento; sem aviso, o cliente fica em silêncio
         # até alguém abrir o monitor. Resolve B1 (mídia ignorada) e H4.
+        # H3: se a escalada cai fora do horário de atendimento humano, anexa
+        # informação para o cliente entender que vai esperar até o expediente.
         _assumir_automatico(numero)
         aviso = avisos.get(msg_type, "Recebi sua mensagem! Em instantes te respondo.")
+        aviso = aviso + aviso_horario_se_fora()
         enviar_whatsapp(numero, aviso)
         append_historico(numero, {"role": "agente", "text": aviso})
         salvar_mensagem_sessao(numero, "agente", text=aviso, type="text")

@@ -55,7 +55,19 @@ class Settings:
     LOJA_NOME: str = os.getenv("LOJA_NOME", "")
     LOJA_WHATSAPP: str = os.getenv("LOJA_WHATSAPP", "")
     GRUPO_LINK: str = os.getenv("GRUPO_LINK", "")
+
+    # Horário de atendimento HUMANO. O agente responde 24/7; este horário é
+    # usado apenas para avisar o cliente quando uma conversa é escalada para
+    # humano fora do expediente.
+    # - HORARIO_ATENDIMENTO: string descritiva mostrada ao cliente
+    # - HORARIO_ATENDIMENTO_DIAS: dias da semana ISO (1=seg .. 7=dom), separados por vírgula
+    # - HORARIO_ATENDIMENTO_INICIO/FIM: HH:MM no fuso HORARIO_ATENDIMENTO_TZ
     HORARIO_ATENDIMENTO: str = os.getenv("HORARIO_ATENDIMENTO", "seg-sex 8h-18h")
+    HORARIO_ATENDIMENTO_DIAS: str = os.getenv("HORARIO_ATENDIMENTO_DIAS", "1,2,3,4,5")
+    HORARIO_ATENDIMENTO_INICIO: str = os.getenv("HORARIO_ATENDIMENTO_INICIO", "08:00")
+    HORARIO_ATENDIMENTO_FIM: str = os.getenv("HORARIO_ATENDIMENTO_FIM", "18:00")
+    HORARIO_ATENDIMENTO_TZ: str = os.getenv("HORARIO_ATENDIMENTO_TZ", "America/Sao_Paulo")
+
     SESSION_TIMEOUT_MINUTES: int = int(os.getenv("SESSION_TIMEOUT_MINUTES", 30))
 
 
