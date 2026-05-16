@@ -290,7 +290,10 @@ async def whatsapp_webhook(request: Request):
         if button_id == "qual:atacado":
             merge_sessao(numero, tipo_cliente="atacado",
                          cliente_recorrente=False, aguardando_qualificacao=None)
-            ack = "Perfeito! Em que posso te ajudar? 😊"
+            ack = (
+                "Que ótimo! Me conta um pouquinho — você já vende moda infantil "
+                "ou tá começando agora? E em que cidade você atua? 😊"
+            )
             enviar_whatsapp(numero, ack)
             append_historico(numero, {"role": "agente", "text": ack})
             salvar_mensagem_sessao(numero, "agente", text=ack, type="text")
@@ -299,15 +302,19 @@ async def whatsapp_webhook(request: Request):
         if button_id == "qual:varejo":
             merge_sessao(numero, tipo_cliente="varejo",
                          cliente_recorrente=False, aguardando_qualificacao=None)
-            despedida = (
-                "Que pena! No momento trabalhamos só com atacado. "
-                "Mas se você tiver lojinha ou conhecer alguém que tenha, "
-                "é só chamar 😊"
+            # Varejo passa a ser atendido — direcionado direto ao site, onde
+            # consegue comprar sozinho. A Bia ainda fica disponível pra dúvidas
+            # de produto/tamanho/frete, mas o caminho de compra é o site.
+            site = settings.SITE_URL
+            boas_vindas = (
+                f"Perfeito! Você compra direto pelo nosso site: {site} 🛒\n"
+                "Lá você vê todos os produtos, tamanhos, fotos e formas de pagamento. "
+                "Qualquer dúvida sobre tecido, prazo ou modelagem é só me chamar 😊"
             )
-            enviar_whatsapp(numero, despedida)
-            append_historico(numero, {"role": "agente", "text": despedida})
-            salvar_mensagem_sessao(numero, "agente", text=despedida, type="text")
-            return {"status": "varejo_descartado_via_botao"}
+            enviar_whatsapp(numero, boas_vindas)
+            append_historico(numero, {"role": "agente", "text": boas_vindas})
+            salvar_mensagem_sessao(numero, "agente", text=boas_vindas, type="text")
+            return {"status": "varejo_direcionado_site"}
 
         logger.warning("Botão desconhecido %s de %s", button_id, numero)
         return {"status": "ignored_interactive"}

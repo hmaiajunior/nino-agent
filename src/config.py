@@ -58,6 +58,9 @@ class Settings:
     LOJA_NOME: str = os.getenv("LOJA_NOME", "")
     LOJA_WHATSAPP: str = os.getenv("LOJA_WHATSAPP", "")
     GRUPO_LINK: str = os.getenv("GRUPO_LINK", "")
+    # Site de compra direta — usado tanto para varejo quanto atacado.
+    # Configurável para evitar hard-coding e facilitar troca de domínio.
+    SITE_URL: str = os.getenv("SITE_URL", "https://www.playbekids.com.br")
 
     # Horário de atendimento HUMANO. O agente responde 24/7; este horário é
     # usado apenas para avisar o cliente quando uma conversa é escalada para
