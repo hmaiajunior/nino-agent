@@ -24,11 +24,12 @@ def _eh_mensagem_vaga(mensagem: str) -> bool:
     return bool(_RE_MSG_VAGA.match(mensagem or ""))
 
 
-async def _enviar_qualificacao_botoes(numero: str, nome_perfil: str | None) -> None:
-    saudacao_nome = f", {nome_perfil}" if nome_perfil else ""
+async def _enviar_qualificacao_botoes(numero: str) -> None:
+    # Não usamos profile_name aqui: pode ser apelido, marca ou qualquer texto
+    # que o cliente colocou no perfil do WhatsApp. Cumprimentamos sem nome.
     texto = (
-        f"Olá{saudacao_nome}! Seja bem-vindo(a) à PlayBeKids 👶🏻👕 "
-        f"Sou a Bia. Pra te direcionar certinho:"
+        "Olá! Seja bem-vindo(a) à PlayBeKids 👶🏻👕 "
+        "Sou a Bia. Pra te direcionar certinho:"
     )
     await enviar_botoes(
         numero,
@@ -85,14 +86,16 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
     """Qualifica cliente, envia saudação e salva contexto no Redis."""
     trace = new_trace("qualification", user_id=numero_whatsapp, session_id=numero_whatsapp)
     cliente = store.buscar_cliente(numero_whatsapp)
-    sessao_atual = store.buscar_sessao(numero_whatsapp) or {}
-    nome_perfil = sessao_atual.get("nome_perfil")
+    # "Recorrente" = tem conversa em DIA anterior (sinal real de relacionamento).
+    # Não usamos `cliente is not None` porque o H1 cria registro em `clientes`
+    # automaticamente com o profile_name do WhatsApp na 1ª mensagem.
+    recorrente = store.tem_conversa_anterior(numero_whatsapp)
 
-    # H5: cliente novo + mensagem vaga ("oi", "olá"…) → envia botões. Evita
-    # 1 chamada Groq e classifica sem ambiguidade. Mensagens já específicas
-    # ("quero atacado", "tem catálogo?") seguem pelo caminho LLM normal.
-    if not cliente and _eh_mensagem_vaga(mensagem):
-        await _enviar_qualificacao_botoes(numero_whatsapp, nome_perfil)
+    # H5: mensagem vaga ("oi", "olá"…) → envia botões. Evita chamada Groq e
+    # classifica sem ambiguidade. Aplicamos a clientes NOVOS (sem conversa
+    # anterior). Recorrentes seguem pelo caminho LLM para saudação contextual.
+    if not recorrente and _eh_mensagem_vaga(mensagem):
+        await _enviar_qualificacao_botoes(numero_whatsapp)
         store.merge_sessao(
             numero_whatsapp,
             aguardando_qualificacao=True,
@@ -101,9 +104,9 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
         )
         return {"aguardando_botao": True}
 
-    if cliente:
+    if recorrente and cliente and cliente.get("tipo"):
+        # Cliente com conversa anterior E tipo já classificado → saudação contextual
         resposta = await _saudacao_cliente_conhecido(
-            nome=cliente["nome"] or nome_perfil,
             tipo=cliente["tipo"],
             mensagem=mensagem,
             trace=trace,
@@ -114,9 +117,7 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
             "origem": origem,
         }
     else:
-        resposta, tipo_detectado = await _saudacao_novo_cliente(
-            mensagem, nome_perfil=nome_perfil, trace=trace,
-        )
+        resposta, tipo_detectado = await _saudacao_novo_cliente(mensagem, trace=trace)
         contexto = {
             "tipo_cliente": tipo_detectado,
             "cliente_recorrente": False,
@@ -130,15 +131,19 @@ async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) ->
     return contexto
 
 
-async def _saudacao_cliente_conhecido(nome: str, tipo: str, mensagem: str, trace=None) -> str:
-    tipo_label = "lojista" if tipo == "atacado" else "cliente"
+async def _saudacao_cliente_conhecido(tipo: str, mensagem: str, trace=None) -> str:
+    tipo_label = "lojista" if tipo == "atacado" else "consumidor"
     messages = [
         {"role": "system", "content": _SYSTEM},
         {
             "role": "user",
             "content": (
-                f"Cliente recorrente chamado {nome} ({tipo_label}) enviou: '{mensagem}'. "
-                "Cumprimente pelo nome de forma breve e calorosa, sem se apresentar novamente."
+                f"Cliente já classificado como {tipo_label} (teve conversa em dia anterior) "
+                f"enviou: '{mensagem}'. Cumprimente de forma breve e direta, sem se "
+                "reapresentar nem se apresentar de novo. "
+                "IMPORTANTE: NÃO use nome próprio do cliente — você não confirmou "
+                "como ele se chama. NÃO use expressões como 'novamente', 'de novo', "
+                "'da última vez', 'que bom ter você de volta'."
             ),
         },
     ]
@@ -162,23 +167,19 @@ async def _saudacao_cliente_conhecido(nome: str, tipo: str, mensagem: str, trace
     return output
 
 
-async def _saudacao_novo_cliente(mensagem: str, nome_perfil: str | None = None, trace=None) -> tuple[str, str | None]:
+async def _saudacao_novo_cliente(mensagem: str, trace=None) -> tuple[str, str | None]:
     """Retorna (resposta_para_enviar, tipo_detectado | None)."""
-    instrucao_nome = (
-        f"O nome do cliente no perfil WhatsApp é '{nome_perfil}' — use na saudação. "
-        if nome_perfil else
-        "Não use nome próprio na saudação (o cliente não se apresentou)."
-    )
     messages = [
         {"role": "system", "content": _SYSTEM},
         {
             "role": "user",
             "content": (
                 f"Novo cliente enviou: '{mensagem}'. "
-                f"{instrucao_nome}"
+                "Envie uma saudação de boas-vindas à PlayBeKids. "
                 "Se a mensagem deixar claro se é lojista ou consumidor final, registre o tipo. "
-                "Envie uma saudação de boas-vindas à PlayBeKids e, se o tipo for indefinido, "
-                "pergunte diretamente se é lojista ou consumidor final."
+                "Se o tipo for indefinido, pergunte diretamente se é lojista ou consumidor final. "
+                "IMPORTANTE: NÃO use nome próprio do cliente — o cliente não se apresentou nesta "
+                "conversa. Você só pode chamar pelo nome se ele tiver dito o nome no texto."
             ),
         },
     ]

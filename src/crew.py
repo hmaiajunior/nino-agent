@@ -107,9 +107,9 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     from src.storage.store import buscar_cliente
     cliente = buscar_cliente(numero_whatsapp)
     membro_grupo = cliente["membro_grupo"] if cliente else False
-    # Nome do cliente: prioriza nome cadastrado em `clientes`, cai para o nome
-    # do perfil Meta (capturado pelo webhook em H1) se não houver cadastro.
-    nome_cliente = (cliente["nome"] if cliente else None) or sessao.get("nome_perfil")
+    # Não injetamos profile_name como "nome do cliente". O profile do WhatsApp
+    # é autodeclarado e pode ser apelido/marca/qualquer texto. A Bia só pode
+    # chamar pelo nome se o cliente disser o nome no histórico desta conversa.
     # Flag persistente setada por EnviarMensagemTool quando o link é enviado.
     # Mais robusto que escanear texto do histórico (que falha se o link muda no .env).
     grupo_link = settings.GRUPO_LINK
@@ -125,13 +125,12 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
         )
 
     wholesale = build_wholesale_agent()
-    nome_trecho = f", nome={nome_cliente}" if nome_cliente else ""
     site_url = settings.SITE_URL
     task_wholesale = Task(
         description=(
             f"Nova mensagem do cliente {numero_whatsapp}: '{mensagem}'\n"
             f"Contexto: tipo={tipo}, recorrente={sessao.get('cliente_recorrente', False)}, "
-            f"origem={sessao.get('origem', 'organico')}, membro_grupo={membro_grupo}{nome_trecho}."
+            f"origem={sessao.get('origem', 'organico')}, membro_grupo={membro_grupo}."
             f"{contexto_historico}\n"
 
             "\nESTILO DE ATENDIMENTO (vendedora consultiva):\n"
@@ -163,8 +162,18 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             "- NÃO se apresente. NÃO pergunte se é lojista — já foi qualificado.\n"
             "- Responda à dúvida do cliente. Não despeje informação não pedida.\n"
             "- Máximo 3 linhas por mensagem, exceto ao enviar condições completas de atacado.\n"
-            "- SEMPRE finalize com um chamada-à-ação suave para o site (link " + site_url + "), "
-            "exceto se o cliente já disse que vai comprar/que vai dar uma olhada.\n"
+            "- Se o cliente fizer pergunta FACTUAL/DIRETA (quando, quem, onde, sobre a "
+            "própria conversa), responda à pergunta primeiro. NÃO empurre CTA do site "
+            "sobre pergunta factual.\n"
+            "- Use o CTA do site (" + site_url + ") apenas quando fluir natural: cliente "
+            "perguntou sobre produto, preço, prazo ou intenção de compra.\n"
+            "- NUNCA chame o cliente pelo nome a menos que ele tenha dito o nome dele "
+            "explicitamente no histórico desta conversa (frases como 'meu nome é X', "
+            "'sou o X', 'me chamo X', 'aqui é o X'). O nome no perfil do WhatsApp NÃO "
+            "conta — pode ser apelido, marca ou qualquer coisa.\n"
+            "- NUNCA invente memória de interações passadas. NÃO use 'novamente', "
+            "'de novo', 'da última vez', 'que bom ter você de volta', 'como você disse "
+            "antes' a menos que haja evidência clara no histórico desta conversa.\n"
             "- NÃO invente preço, prazo ou política. Redirecione ao site quando não souber.\n"
             "- Chame enviar_mensagem UMA ÚNICA VEZ por execução. Se já chamou enviar_mensagem, pare.\n"
             "- O convite ao grupo, se aplicável, deve estar DENTRO da mesma chamada enviar_mensagem da despedida.\n"

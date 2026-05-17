@@ -93,6 +93,25 @@ def salvar_conversa(dados: dict) -> int:
         return cur.fetchone()[0]
 
 
+def tem_conversa_anterior(numero_whatsapp: str) -> bool:
+    """True se há conversa registrada em DIA anterior ao de hoje (fuso SP).
+
+    Critério estrito de "cliente recorrente" — diferente de `buscar_cliente`,
+    que pode retornar registro autocadastrado pelo upsert do nome de perfil
+    do WhatsApp (autodeclarado, não confiável como sinal de relacionamento).
+    """
+    with pg_cursor() as cur:
+        cur.execute(
+            """SELECT 1 FROM conversas
+               WHERE numero_whatsapp = %s
+                 AND (iniciada_em AT TIME ZONE 'America/Sao_Paulo')::date
+                     < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+               LIMIT 1""",
+            (numero_whatsapp,),
+        )
+        return cur.fetchone() is not None
+
+
 def buscar_conversa_do_dia(numero_whatsapp: str) -> int | None:
     """Retorna o id da conversa já aberta hoje para este número, ou None.
 
