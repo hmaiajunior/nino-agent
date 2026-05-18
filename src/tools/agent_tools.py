@@ -252,10 +252,8 @@ class EnviarCatalogTool(BaseTool):
                 "no site. A análise leva até 48h, mas geralmente sai bem antes."
             )
 
-        from io import BytesIO
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
-        from googleapiclient.http import MediaIoBaseDownload
 
         creds = service_account.Credentials.from_service_account_file(
             settings.GOOGLE_SA_CREDENTIALS_PATH,
@@ -263,11 +261,12 @@ class EnviarCatalogTool(BaseTool):
         )
         drive = build("drive", "v3", credentials=creds, cache_discovery=False)
 
+        # Inclui modifiedTime para invalidar cache quando o PDF é atualizado.
         results = drive.files().list(
             q=f"'{settings.GOOGLE_DRIVE_CATALOG_FOLDER_ID}' in parents and mimeType='application/pdf' and trashed=false",
             orderBy="modifiedTime desc",
             pageSize=1,
-            fields="files(id, name)",
+            fields="files(id, name, modifiedTime)",
         ).execute()
 
         files = results.get("files", [])
@@ -276,31 +275,7 @@ class EnviarCatalogTool(BaseTool):
 
         file_id = files[0]["id"]
         file_name = files[0]["name"]
-
-        # Baixa o PDF na memória — evita tornar o arquivo público no Drive.
-        buf = BytesIO()
-        request = drive.files().get_media(fileId=file_id)
-        downloader = MediaIoBaseDownload(buf, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        buf.seek(0)
-        pdf_bytes = buf.getvalue()
-
-        # 1. Upload do PDF para a Meta — devolve media_id
-        headers_auth = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
-        try:
-            upload_resp = httpx.post(
-                f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/media",
-                headers=headers_auth,
-                files={"file": (file_name, pdf_bytes, "application/pdf")},
-                data={"messaging_product": "whatsapp", "type": "application/pdf"},
-                timeout=60,
-            )
-            upload_resp.raise_for_status()
-            media_id = upload_resp.json()["id"]
-        except Exception as e:
-            return f"erro_upload: {e}"
+        modified_time = files[0].get("modifiedTime", "")
 
         # Defesa B6: limite de 1 catálogo por execução. Texto via enviar_mensagem
         # continua permitido em paralelo — o agente pode mandar catálogo + 1 texto.
@@ -308,11 +283,50 @@ class EnviarCatalogTool(BaseTool):
         exec_id = sessao.get("current_exec_id")
         if exec_id:
             r_conn = store.redis_conn()
-            chave = f"sent_catalog:{numero_whatsapp}:{exec_id}"
-            n = r_conn.incr(chave)
-            r_conn.expire(chave, 120)
+            chave_exec = f"sent_catalog:{numero_whatsapp}:{exec_id}"
+            n = r_conn.incr(chave_exec)
+            r_conn.expire(chave_exec, 120)
             if n > 1:
                 return "erro: enviar_catalogo ja foi chamado nesta execucao"
+
+        # Cache do media_id: o PDF é o mesmo para todos os clientes e o media_id
+        # da Meta vale ~30 dias. Hash da chave inclui modifiedTime — se o PDF for
+        # atualizado no Drive, cache fica órfão automaticamente. TTL de 24h para
+        # margem confortável.
+        cache_key = f"catalog:media_id:{file_id}:{modified_time}"
+        r_conn = store.redis_conn()
+        media_id = r_conn.get(cache_key)
+
+        headers_auth = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
+
+        if not media_id:
+            # Cache miss: baixa do Drive + upload pra Meta + cacheia
+            from io import BytesIO
+            from googleapiclient.http import MediaIoBaseDownload
+
+            buf = BytesIO()
+            request = drive.files().get_media(fileId=file_id)
+            downloader = MediaIoBaseDownload(buf, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            buf.seek(0)
+            pdf_bytes = buf.getvalue()
+
+            try:
+                upload_resp = httpx.post(
+                    f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/media",
+                    headers=headers_auth,
+                    files={"file": (file_name, pdf_bytes, "application/pdf")},
+                    data={"messaging_product": "whatsapp", "type": "application/pdf"},
+                    timeout=60,
+                )
+                upload_resp.raise_for_status()
+                media_id = upload_resp.json()["id"]
+            except Exception as e:
+                return f"erro_upload: {e}"
+
+            r_conn.setex(cache_key, 86400, media_id)  # 24h
 
         # 2. Envia a mensagem usando media_id (não link público)
         to = numero_whatsapp if numero_whatsapp.startswith("+") else f"+{numero_whatsapp}"
