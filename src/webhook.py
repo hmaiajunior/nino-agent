@@ -242,6 +242,18 @@ async def whatsapp_webhook(request: Request):
             upsert_cliente_perfil(numero, nome_perfil)
             merge_sessao(numero, nome_perfil=nome_perfil)
 
+        # CTWA: a Meta entrega o objeto `referral` na 1ª msg após clique em
+        # anúncio do Facebook/Instagram. Persiste na sessão para a qualification
+        # inferir o tipo de cliente (atacado/varejo) sem precisar de botões nem LLM.
+        referral_obj = msg.get("referral")
+        if referral_obj:
+            merge_sessao(numero, referral_inicial=referral_obj)
+            # `source_id` do anúncio também vira a `origem` da conversa, útil
+            # para relatórios de campanha. Texto livre, sem schema rígido.
+            src_id = referral_obj.get("source_id")
+            if src_id:
+                origem = f"ad:{src_id}"
+
         # Idempotência: a Meta reenvia a mesma mensagem se não receber 200 a tempo.
         # SET NX com TTL de 24h é suficiente — após esse prazo o ID é descartado pela Meta.
         if msg_ja_processada(msg_id):

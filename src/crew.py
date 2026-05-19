@@ -86,8 +86,14 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
     # com `historico` ao receber a mensagem (antes do timer), então `not sessao`
     # não diferencia "novo" de "já qualificado".
     if not sessao.get("tipo_cliente"):
-        await run_qualification(numero_whatsapp, mensagem, origem)
-        return "qualificado"
+        resultado = await run_qualification(numero_whatsapp, mensagem, origem)
+        # Caminhos da qualification:
+        # - {"aguardando_botao": True} → cliente novo sem sinal: enviou botões, encerra aqui.
+        # - {"direct_to_wholesale": True} → recorrente ou inferido por campanha:
+        #   cai através e segue para o Wholesale logo abaixo, com tipo_cliente já setado.
+        if not resultado.get("direct_to_wholesale"):
+            return "qualificado"
+        sessao = buscar_sessao(numero_whatsapp) or sessao  # recarrega o tipo_cliente fresco
 
     tipo = sessao.get("tipo_cliente", "atacado")
 
@@ -124,6 +130,20 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             f"Se a conversa não terminou, NÃO mencione o grupo."
         )
 
+    # Primeira interação = não há mensagem do agente ainda na sessão atual.
+    # Quando o cliente cai direto no Wholesale (recorrente sem dia novo, ou
+    # inferido por campanha), precisamos avisar a Bia pra cumprimentar — não
+    # tem mais a qualification fazendo isso antes.
+    primeira_interacao = not any(
+        m.get("role") in ("agente", "humano") for m in sessao.get("historico", [])
+    )
+    nota_saudacao = (
+        "Esta é a PRIMEIRA mensagem que você responde a este cliente — comece "
+        "com saudação curta e simpática (\"Oi! Que bom te ver por aqui\") "
+        "ANTES de responder à dúvida. NÃO se apresente como Bia (cliente já vê "
+        "a foto da loja); só seja calorosa.\n" if primeira_interacao else ""
+    )
+
     wholesale = build_wholesale_agent()
     site_url = settings.SITE_URL
     task_wholesale = Task(
@@ -131,6 +151,7 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             f"Cliente {numero_whatsapp} (tipo={tipo}, recorrente={sessao.get('cliente_recorrente', False)}, "
             f"membro_grupo={membro_grupo}) enviou: '{mensagem}'.\n"
             f"{contexto_historico}\n"
+            + nota_saudacao +
 
             "ESTILO: vendedora consultiva no WhatsApp. Valide a dúvida ('faz sentido', "
             "'boa pergunta'), responda com benefício concreto (não feature seca), conduza "
@@ -144,7 +165,7 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             f"• 'é confiável?' → loja oficial, anos no mercado, moda infantil masculina; {site_url}\n"
 
             "REGRAS:\n"
-            "- NÃO se apresente. NÃO pergunte se é lojista — já qualificado.\n"
+            "- NÃO se apresente como 'Bia' nem repita o nome da loja. NÃO pergunte se é lojista — já qualificado.\n"
             "- Responda só o que foi perguntado. Máx 3 linhas (exceto condições de atacado).\n"
             "- Pergunta FACTUAL (quando, quem, onde, sobre a conversa) → responda direto, sem CTA forçado.\n"
             f"- CTA para {site_url} só quando fluir natural (dúvida de produto/preço/prazo/compra).\n"

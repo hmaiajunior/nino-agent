@@ -1,32 +1,107 @@
-"""Qualificação de cliente — chamada direta ao Groq (Llama), sem CrewAI."""
+"""Qualificação determinística do cliente — sem LLM.
 
-import json
+Fluxo:
+1. Cliente recorrente (tem conversa em dia anterior, com tipo conhecido) →
+   pula qualificação. Wholesale entra direto, aproveitando o tipo herdado.
+2. Cliente novo COM sinal de campanha (referral CTWA, keywords no anúncio
+   ou na 1ª msg) → tipo inferido + vai direto pro Wholesale.
+3. Cliente novo SEM sinal claro → enviar_botoes para classificação manual.
+
+Não há mais chamada LLM aqui; o caminho LLM da qualification (Llama 8B via
+Groq) era origem de saudações ruins e errantes ("Boa-feira!") sem ganho
+proporcional. A saudação contextual fica por conta do Wholesale (Gemini
+Flash), que já tem prompt e contexto melhores para isso.
+"""
+
 import re
-import groq
+
 from src.config import settings
-from src.llm_retry import groq_retry
-from src.observability import new_trace
 from src.storage import store
-from src.whatsapp import enviar_botoes, enviar_whatsapp_async
+from src.whatsapp import enviar_botoes
 
 
-# Mensagens vagas demais para classificar: usamos botões em vez de gastar LLM
-# e arriscar erro de classificação. Cobre saudações secas e "?".
-_RE_MSG_VAGA = re.compile(
-    r"^\s*(oi+|olá+|ola+|hello+|hi+|hey+|"
+# ============================================================================
+# Detecção de mensagem vaga (caminho dos botões)
+# ============================================================================
+
+# Parts vagas reconhecidas. Mensagens compostas só por estas + pontuação são
+# tratadas como "sem intenção comercial clara" e vão para os botões.
+_PARTES_VAGAS = re.compile(
+    r"\b("
+    r"oi+|olá+|ola+|hello+|hi+|hey+|"
     r"bom\s+dia|boa\s+tarde|boa\s+noite|"
-    r"\?+|\.+)\s*[!?.]*\s*$",
+    r"td\s*b[oe]m|tudo\s+bem|tudo\s+bom|tudo\s+ok|"
+    r"como\s+vai|como\s+est[aá]"
+    r")\b",
+    re.IGNORECASE,
+)
+_RESIDUO_PERMITIDO = re.compile(r"^[\s,.!?]*$")
+
+
+def _eh_mensagem_vaga(mensagem: str) -> bool:
+    """True se a mensagem só contém saudações reconhecidas + pontuação."""
+    if not mensagem or not mensagem.strip():
+        return False
+    sem_vagas = _PARTES_VAGAS.sub("", mensagem)
+    return bool(_RESIDUO_PERMITIDO.match(sem_vagas))
+
+
+# ============================================================================
+# Inferência de tipo via campanha
+# ============================================================================
+
+_RE_ATACADO = re.compile(
+    r"\b(atacado|lojista|lojistas|revend\w*|loja\s+de\s+roupa|"
+    r"quero\s+revender|para\s+revenda)\b",
+    re.IGNORECASE,
+)
+_RE_VAREJO = re.compile(
+    r"\b(uso\s+pr[óo]prio|pessoa\s+f[ií]sica|consumidor\s+final|"
+    r"meu\s+filho|minha\s+filha|para\s+mim|para\s+(o\s+)?meu\s+filho)\b",
     re.IGNORECASE,
 )
 
 
-def _eh_mensagem_vaga(mensagem: str) -> bool:
-    return bool(_RE_MSG_VAGA.match(mensagem or ""))
+def _ids_configurados(spec: str) -> set[str]:
+    return {s.strip() for s in (spec or "").split(",") if s.strip()}
 
+
+def _inferir_tipo_campanha(referral: dict, mensagem: str) -> str | None:
+    """Tenta deduzir 'atacado' ou 'varejo' do contexto da chegada do cliente.
+
+    Camadas (mais confiável → mais permissiva):
+    1. source_id do referral bate com lista de IDs configurada
+    2. headline/body do anúncio contém keyword forte
+    3. própria mensagem do cliente tem keyword forte
+    Retorna None se não há sinal claro — cliente vai para botões.
+    """
+    source_id = (referral or {}).get("source_id", "")
+    if source_id:
+        if source_id in _ids_configurados(settings.CAMPANHAS_ATACADO_IDS):
+            return "atacado"
+        if source_id in _ids_configurados(settings.CAMPANHAS_VAREJO_IDS):
+            return "varejo"
+
+    texto = " ".join([
+        (referral or {}).get("headline", "") or "",
+        (referral or {}).get("body", "") or "",
+        mensagem or "",
+    ])
+
+    # Prioriza varejo quando ambos batem (ex: "uso próprio, sem revenda") —
+    # consumidor final é o caso mais "estreito"; lojista normalmente é claro.
+    if _RE_VAREJO.search(texto):
+        return "varejo"
+    if _RE_ATACADO.search(texto):
+        return "atacado"
+    return None
+
+
+# ============================================================================
+# Botões
+# ============================================================================
 
 async def _enviar_qualificacao_botoes(numero: str) -> None:
-    # Não usamos profile_name aqui: pode ser apelido, marca ou qualquer texto
-    # que o cliente colocou no perfil do WhatsApp. Cumprimentamos sem nome.
     texto = (
         "Olá! Seja bem-vindo(a) à PlayBeKids 👶🏻👕 "
         "Sou a Bia. Pra te direcionar certinho:"
@@ -39,168 +114,53 @@ async def _enviar_qualificacao_botoes(numero: str) -> None:
             {"id": "qual:varejo", "title": "Compra própria"},
         ],
     )
-    # Registra a saudação no histórico para o monitor mostrar contexto
-    store.append_historico(numero, {"role": "agente", "text": texto + " [botões: Sou lojista | Compra própria]"})
+    store.append_historico(numero, {
+        "role": "agente",
+        "text": texto + " [botões: Sou lojista | Compra própria]",
+    })
     store.salvar_mensagem_sessao(numero, "agente", text=texto, type="text")
 
-_client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
-_LLM_TIMEOUT = 20  # segundos
 
-
-@groq_retry
-async def _completion(**kwargs):
-    """Chamada Groq com retry + timeout — protege contra 5xx/timeout transitórios."""
-    return await _client.chat.completions.create(timeout=_LLM_TIMEOUT, **kwargs)
-
-_SYSTEM = (
-    "Você é a Bia da PlayBeKids, loja de moda masculina infantil (0-12 anos). "
-    "Responda de forma curta e natural, como uma atendente simpática no WhatsApp. "
-    "Nunca mencione preços, produtos ou condições. Máximo 2 linhas por mensagem."
-)
-
-_TOOL_NOVO = {
-    "type": "function",
-    "function": {
-        "name": "qualificar",
-        "description": "Retorna a saudação a enviar e o tipo de cliente inferido da mensagem.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "resposta": {
-                    "type": "string",
-                    "description": "Mensagem de boas-vindas a enviar ao cliente pelo WhatsApp",
-                },
-                "tipo_detectado": {
-                    "type": "string",
-                    "enum": ["atacado", "varejo", "indefinido"],
-                    "description": "Tipo de cliente inferido da primeira mensagem; 'indefinido' se não for possível determinar",
-                },
-            },
-            "required": ["resposta", "tipo_detectado"],
-        },
-    },
-}
-
+# ============================================================================
+# Orquestração
+# ============================================================================
 
 async def run_qualification(numero_whatsapp: str, mensagem: str, origem: str) -> dict:
-    """Qualifica cliente, envia saudação e salva contexto no Redis."""
-    trace = new_trace("qualification", user_id=numero_whatsapp, session_id=numero_whatsapp)
+    """Qualifica o cliente sem chamar LLM. Decide entre 3 caminhos."""
+    sessao = store.buscar_sessao(numero_whatsapp) or {}
+    referral = sessao.get("referral_inicial") or {}
+
     cliente = store.buscar_cliente(numero_whatsapp)
-    # "Recorrente" = tem conversa em DIA anterior (sinal real de relacionamento).
-    # Não usamos `cliente is not None` porque o H1 cria registro em `clientes`
-    # automaticamente com o profile_name do WhatsApp na 1ª mensagem.
     recorrente = store.tem_conversa_anterior(numero_whatsapp)
 
-    # H5: mensagem vaga ("oi", "olá"…) → envia botões. Evita chamada Groq e
-    # classifica sem ambiguidade. Aplicamos a clientes NOVOS (sem conversa
-    # anterior). Recorrentes seguem pelo caminho LLM para saudação contextual.
-    if not recorrente and _eh_mensagem_vaga(mensagem):
-        await _enviar_qualificacao_botoes(numero_whatsapp)
+    # 1) Recorrente com tipo conhecido → Wholesale herda o tipo
+    if recorrente and cliente and cliente.get("tipo"):
         store.merge_sessao(
             numero_whatsapp,
-            aguardando_qualificacao=True,
+            tipo_cliente=cliente["tipo"],
+            cliente_recorrente=True,
             origem=origem,
-            cliente_recorrente=False,
         )
-        return {"aguardando_botao": True}
+        return {"tipo_cliente": cliente["tipo"], "direct_to_wholesale": True}
 
-    if recorrente and cliente and cliente.get("tipo"):
-        # Cliente com conversa anterior E tipo já classificado → saudação contextual
-        resposta = await _saudacao_cliente_conhecido(
-            tipo=cliente["tipo"],
-            mensagem=mensagem,
-            trace=trace,
+    # 2) Sinal de campanha (CTWA + keywords) → tipo inferido direto
+    tipo_inferido = _inferir_tipo_campanha(referral, mensagem)
+    if tipo_inferido:
+        store.merge_sessao(
+            numero_whatsapp,
+            tipo_cliente=tipo_inferido,
+            cliente_recorrente=recorrente,
+            origem=origem,
         )
-        contexto = {
-            "tipo_cliente": cliente["tipo"],
-            "cliente_recorrente": True,
-            "origem": origem,
-        }
-    else:
-        resposta, tipo_detectado = await _saudacao_novo_cliente(mensagem, trace=trace)
-        contexto = {
-            "tipo_cliente": tipo_detectado,
-            "cliente_recorrente": False,
-            "origem": origem,
-        }
+        return {"tipo_cliente": tipo_inferido, "direct_to_wholesale": True, "via": "campanha"}
 
-    await enviar_whatsapp_async(numero_whatsapp, resposta)
-    store.append_historico(numero_whatsapp, {"role": "agente", "text": resposta})
-    store.merge_sessao(numero_whatsapp, **contexto)
-    store.salvar_mensagem_sessao(numero_whatsapp, "agente", text=resposta, type="text")
-    return contexto
-
-
-async def _saudacao_cliente_conhecido(tipo: str, mensagem: str, trace=None) -> str:
-    tipo_label = "lojista" if tipo == "atacado" else "consumidor"
-    messages = [
-        {"role": "system", "content": _SYSTEM},
-        {
-            "role": "user",
-            "content": (
-                f"Cliente já classificado como {tipo_label} (teve conversa em dia anterior) "
-                f"enviou: '{mensagem}'. Cumprimente de forma breve e direta, sem se "
-                "reapresentar nem se apresentar de novo. "
-                "IMPORTANTE: NÃO use nome próprio do cliente — você não confirmou "
-                "como ele se chama. NÃO use expressões como 'novamente', 'de novo', "
-                "'da última vez', 'que bom ter você de volta'."
-            ),
-        },
-    ]
-    completion = await _completion(
-        model=settings.GROQ_MODEL,
-        max_tokens=150,
-        messages=messages,
+    # 3) Sem sinal → botões (sempre, mesmo para msg vaga ou específica).
+    #    Eliminar o LLM aqui evita "Boa-feira!" e similares.
+    await _enviar_qualificacao_botoes(numero_whatsapp)
+    store.merge_sessao(
+        numero_whatsapp,
+        aguardando_qualificacao=True,
+        origem=origem,
+        cliente_recorrente=False,
     )
-    output = completion.choices[0].message.content
-    if trace is not None:
-        trace.generation(
-            name="saudacao_cliente_conhecido",
-            model=settings.GROQ_MODEL,
-            input=messages,
-            output=output,
-            usage={
-                "input": completion.usage.prompt_tokens,
-                "output": completion.usage.completion_tokens,
-            },
-        )
-    return output
-
-
-async def _saudacao_novo_cliente(mensagem: str, trace=None) -> tuple[str, str | None]:
-    """Retorna (resposta_para_enviar, tipo_detectado | None)."""
-    messages = [
-        {"role": "system", "content": _SYSTEM},
-        {
-            "role": "user",
-            "content": (
-                f"Novo cliente enviou: '{mensagem}'. "
-                "Envie uma saudação de boas-vindas à PlayBeKids. "
-                "Se a mensagem deixar claro se é lojista ou consumidor final, registre o tipo. "
-                "Se o tipo for indefinido, pergunte diretamente se é lojista ou consumidor final. "
-                "IMPORTANTE: NÃO use nome próprio do cliente — o cliente não se apresentou nesta "
-                "conversa. Você só pode chamar pelo nome se ele tiver dito o nome no texto."
-            ),
-        },
-    ]
-    completion = await _completion(
-        model=settings.GROQ_MODEL,
-        max_tokens=200,
-        messages=messages,
-        tools=[_TOOL_NOVO],
-        tool_choice={"type": "function", "function": {"name": "qualificar"}},
-    )
-    args = json.loads(completion.choices[0].message.tool_calls[0].function.arguments)
-    if trace is not None:
-        trace.generation(
-            name="saudacao_novo_cliente",
-            model=settings.GROQ_MODEL,
-            input=messages,
-            output=args,
-            usage={
-                "input": completion.usage.prompt_tokens,
-                "output": completion.usage.completion_tokens,
-            },
-        )
-    tipo_raw = args["tipo_detectado"]
-    return args["resposta"], (tipo_raw if tipo_raw != "indefinido" else None)
+    return {"aguardando_botao": True}

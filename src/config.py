@@ -88,5 +88,12 @@ class Settings:
     RATE_LIMIT_TETO: int = int(os.getenv("RATE_LIMIT_TETO", 15))
     RATE_LIMIT_JANELA_S: int = int(os.getenv("RATE_LIMIT_JANELA_S", 60))
 
+    # Inferência de tipo do cliente via Click-to-WhatsApp Ads (CTWA).
+    # Source IDs (ad IDs do Meta Ads Manager) separados por vírgula. Cliente
+    # que chega via referral com source_id listado pula a tela de botões e
+    # vai direto para o atendimento já classificado.
+    CAMPANHAS_ATACADO_IDS: str = os.getenv("CAMPANHAS_ATACADO_IDS", "")
+    CAMPANHAS_VAREJO_IDS: str = os.getenv("CAMPANHAS_VAREJO_IDS", "")
+
 
 settings = Settings()
