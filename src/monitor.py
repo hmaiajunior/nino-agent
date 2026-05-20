@@ -579,6 +579,9 @@ def devolver_conversa(numero: str, _=Depends(_token)):
         raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
     # modo=None é tratado como "não-humano" pelos checks `sessao.get("modo") == "humano"`.
     store.merge_sessao(numero, modo=None)
+    # Zera o contador de redirecionamentos para o agente não ser escalado
+    # imediatamente de novo na próxima msg do cliente.
+    store.reset_redirect_site_count(numero)
     return {"status": "devolvido", "numero": numero}
 
 

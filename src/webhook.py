@@ -21,6 +21,7 @@ from src.storage.store import (
     buscar_conversa_do_dia,
     buscar_sessao,
     consumir_rate_limit,
+    get_redirect_site_count,
     liberar_lock_numero,
     merge_sessao,
     msg_ja_processada,
@@ -135,6 +136,17 @@ async def _processar(numero: str, origem: str, delay: int):
         # foram turnos distintos do cliente e não trata como uma frase só.
         mensagem_consolidada = "\n".join(msgs_novas)
         merge_sessao(numero, ultimo_processado_idx=len(historico))
+
+        # Escala silenciosa após 2 redirecionamentos ao site. A 3ª iteração
+        # da Bia não chega a ser invocada: vai para humano sem aviso ao cliente.
+        # Atendente abre o monitor e segue manualmente.
+        if get_redirect_site_count(numero) >= 2:
+            merge_sessao(numero, modo="humano")
+            logger.info(
+                "Conversa %s escalada para humano: 2 redirecionamentos ao site na sessão",
+                numero,
+            )
+            return
 
         # H2: sinaliza "digitando…" antes de chamar o LLM. A Meta API combina
         # read receipt + typing no mesmo POST; aqui só typing porque o read já

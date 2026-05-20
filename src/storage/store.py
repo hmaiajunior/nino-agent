@@ -469,6 +469,30 @@ def liberar_lock_numero(numero: str) -> None:
     redis_conn().delete(f"session:lock:{numero}")
 
 
+def contar_redirect_site(numero: str) -> int:
+    """Incrementa o contador de redirecionamentos ao site nesta conversa.
+
+    TTL alinhado com a sessão Redis: contagem zera quando o cliente fica
+    inativo. Usado para evitar que a Bia mande o cliente ao site repetidamente
+    — após 2 redirecionamentos, a 3ª iteração escala silenciosamente p/ humano.
+    """
+    chave = f"site_redirects:{numero}"
+    r = redis_conn()
+    n = r.incr(chave)
+    if n == 1:
+        r.expire(chave, settings.SESSION_TIMEOUT_MINUTES * 60)
+    return n
+
+
+def get_redirect_site_count(numero: str) -> int:
+    raw = redis_conn().get(f"site_redirects:{numero}")
+    return int(raw) if raw else 0
+
+
+def reset_redirect_site_count(numero: str) -> None:
+    redis_conn().delete(f"site_redirects:{numero}")
+
+
 def consumir_rate_limit(numero: str, teto: int, janela_s: int) -> tuple[bool, int]:
     """Janela deslizante de mensagens por número via INCR + EXPIRE.
 

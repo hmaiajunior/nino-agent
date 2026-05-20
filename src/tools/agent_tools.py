@@ -10,6 +10,23 @@ from src.config import settings
 from src.storage import store
 
 
+def _texto_redireciona_ao_site(texto: str) -> bool:
+    """True se o texto enviado pela Bia menciona o domínio do site.
+
+    Normaliza http/https/www/barra final para captar variações ("www.x.com.br",
+    "x.com.br", "https://www.x.com.br/"). Usado para contar redirecionamentos.
+    """
+    site = settings.SITE_URL
+    if not site or not texto:
+        return False
+    chave = site.lower()
+    for prefix in ("https://", "http://", "www."):
+        if chave.startswith(prefix):
+            chave = chave[len(prefix):]
+    chave = chave.rstrip("/")
+    return chave in texto.lower()
+
+
 # --- Schemas ---
 
 class NumeroSchema(BaseModel):
@@ -105,6 +122,10 @@ class EnviarMensagemTool(BaseTool):
             # se o link no .env mudasse).
             if settings.GRUPO_LINK and settings.GRUPO_LINK in texto:
                 store.merge_sessao(numero, grupo_convidado=True)
+            # Conta redirecionamento ao site. Após 2 nesta conversa, a 3ª
+            # iteração da Bia é escalada silenciosamente para humano (webhook).
+            if _texto_redireciona_ao_site(texto):
+                store.contar_redirect_site(numero)
             return "mensagem_enviada"
         except httpx.HTTPStatusError as e:
             return f"erro_envio: {e} | body: {e.response.text}"
