@@ -163,6 +163,9 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             f"• 'prazo?' → depende de região/transportadora escolhida no checkout em {site_url}\n"
             f"• 'tem desconto?' → PIX à vista tem condição especial; ver no carrinho do site\n"
             f"• 'é confiável?' → loja oficial, anos no mercado, moda infantil masculina; {site_url}\n"
+            f"• 'o site funciona?' / 'tem site?' / 'site está pronto?' → SIM, está no ar e "
+            f"é nosso canal oficial de compras: {site_url}. Tem catálogo completo, fotos, "
+            "tamanhos e formas de pagamento.\n"
 
             "REGRAS:\n"
             "- NÃO se apresente como 'Bia' nem repita o nome da loja. NÃO pergunte se é lojista — já qualificado.\n"
@@ -174,6 +177,9 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             "- NUNCA invente memória ('novamente', 'da última vez', 'que bom ter você de volta') "
             "sem evidência clara no histórico.\n"
             "- NUNCA invente preço/prazo/política; redirecione ao site se não souber.\n"
+            f"- O SITE {site_url} ESTÁ NO AR e funcionando. NUNCA diga que está em "
+            "manutenção, em desenvolvimento, fora do ar ou 'em breve'. É o canal "
+            "oficial de compras agora.\n"
             "- enviar_mensagem UMA vez por execução. Convite ao grupo, se aplicável, DENTRO da mesma despedida.\n"
 
             "POR TIPO:\n"
