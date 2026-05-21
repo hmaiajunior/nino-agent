@@ -493,6 +493,29 @@ def reset_redirect_site_count(numero: str) -> None:
     redis_conn().delete(f"site_redirects:{numero}")
 
 
+# ---------------------------------------------------------------------------
+# Cooldown de envio do link do site — uma vez a cada 30 min por número.
+# Diferente de site_redirects (que conta para escalada); este é o anti-repetição.
+# ---------------------------------------------------------------------------
+
+_SITE_COOLDOWN_S = 30 * 60
+
+
+def site_em_cooldown(numero: str) -> bool:
+    """True se o link do site já foi enviado a este número nos últimos 30 min."""
+    return redis_conn().exists(f"site_enviado:{numero}") > 0
+
+
+def marcar_site_enviado(numero: str) -> None:
+    """Inicia/renova o cooldown de 30 min para envio do link do site."""
+    redis_conn().setex(f"site_enviado:{numero}", _SITE_COOLDOWN_S, 1)
+
+
+def resetar_site_enviado(numero: str) -> None:
+    """Limpa o cooldown — usado em 'Devolver ao agente' no monitor."""
+    redis_conn().delete(f"site_enviado:{numero}")
+
+
 def consumir_rate_limit(numero: str, teto: int, janela_s: int) -> tuple[bool, int]:
     """Janela deslizante de mensagens por número via INCR + EXPIRE.
 

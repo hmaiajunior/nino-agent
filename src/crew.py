@@ -9,7 +9,7 @@ from src.agents.agents import build_wholesale_agent, build_insight_agent
 from src.config import settings
 from src.llm_summary import resumir_historico
 from src.qualification import run_qualification
-from src.storage.store import buscar_sessao, merge_sessao
+from src.storage.store import buscar_sessao, merge_sessao, site_em_cooldown
 
 
 # Janela deslizante: últimas N msgs no prompt; resumo cacheado das anteriores.
@@ -144,6 +144,16 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
         "a foto da loja); só seja calorosa.\n" if primeira_interacao else ""
     )
 
+    # Cooldown do link do site: se já enviei nos últimos 30min, NÃO mando de novo.
+    # Defesa em código também remove URL se passar, mas instruir é mais limpo.
+    nota_cooldown_site = (
+        "ATENÇÃO: você JÁ enviou o link do site para este cliente nesta conversa "
+        "(há menos de 30 minutos). NÃO INCLUA o URL na sua resposta. Se precisar "
+        "referenciar, use frase curta tipo \"no site que te passei mais cedo\" "
+        "ou \"lá no site\" sem repetir o link.\n"
+        if site_em_cooldown(numero_whatsapp) else ""
+    )
+
     wholesale = build_wholesale_agent()
     site_url = settings.SITE_URL
     task_wholesale = Task(
@@ -151,7 +161,8 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             f"Cliente {numero_whatsapp} (tipo={tipo}, recorrente={sessao.get('cliente_recorrente', False)}, "
             f"membro_grupo={membro_grupo}) enviou: '{mensagem}'.\n"
             f"{contexto_historico}\n"
-            + nota_saudacao +
+            + nota_saudacao
+            + nota_cooldown_site +
 
             "ESTILO: vendedora consultiva no WhatsApp. Valide a dúvida ('faz sentido', "
             "'boa pergunta'), responda com benefício concreto (não feature seca), conduza "
@@ -203,7 +214,12 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             "- NÃO se apresente como 'Bia' nem repita o nome da loja. NÃO pergunte se é lojista — já qualificado.\n"
             "- Responda só o que foi perguntado. Máx 3 linhas (exceto condições de atacado).\n"
             "- Pergunta FACTUAL (quando, quem, onde, sobre a conversa) → responda direto, sem CTA forçado.\n"
-            f"- CTA para {site_url} só quando fluir natural (dúvida de produto/preço/prazo/compra).\n"
+            f"- Envie o link do site APENAS quando a pergunta REALMENTE pede (produto, "
+            "preço, prazo, finalizar compra, cadastro de revendedor, ver catálogo). "
+            "NÃO mande o link em saudação, agradecimento, despedida, dúvida factual "
+            "ou conversa de manutenção. Repetir o link cansa o cliente.\n"
+            "- Link do site UMA ÚNICA VEZ por sessão (já é o suficiente). Se já enviou, "
+            "referencie com 'lá no site que te passei' sem repetir o URL.\n"
             "- NUNCA chame o cliente pelo nome a menos que ELE tenha dito o nome no texto desta conversa. "
             "Profile do WhatsApp NÃO conta — pode ser apelido/marca.\n"
             "- NUNCA invente memória ('novamente', 'da última vez', 'que bom ter você de volta') "

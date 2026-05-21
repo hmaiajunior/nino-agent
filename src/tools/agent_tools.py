@@ -1,6 +1,7 @@
 """Tools dos agentes NinoAgent — formato CrewAI BaseTool."""
 
 import json
+import re
 from typing import Type
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
@@ -10,21 +11,48 @@ from src.config import settings
 from src.storage import store
 
 
+def _dominio_site() -> str:
+    """Retorna o domínio do site sem protocolo/www/barra final."""
+    site = (settings.SITE_URL or "").lower()
+    for prefix in ("https://", "http://", "www."):
+        if site.startswith(prefix):
+            site = site[len(prefix):]
+    return site.rstrip("/")
+
+
 def _texto_redireciona_ao_site(texto: str) -> bool:
     """True se o texto enviado pela Bia menciona o domínio do site.
 
     Normaliza http/https/www/barra final para captar variações ("www.x.com.br",
-    "x.com.br", "https://www.x.com.br/"). Usado para contar redirecionamentos.
+    "x.com.br", "https://www.x.com.br/").
     """
-    site = settings.SITE_URL
-    if not site or not texto:
+    dominio = _dominio_site()
+    if not dominio or not texto:
         return False
-    chave = site.lower()
-    for prefix in ("https://", "http://", "www."):
-        if chave.startswith(prefix):
-            chave = chave[len(prefix):]
-    chave = chave.rstrip("/")
-    return chave in texto.lower()
+    return dominio in texto.lower()
+
+
+def _remover_url_site(texto: str) -> str:
+    """Remove o URL do site (e o conectivo imediatamente anterior) do texto.
+
+    Defesa em código de último caso — em uso normal, a Bia recebe instrução no
+    prompt para não repetir o link em 30 min. Quando ela escapa, a frase aqui
+    pode ficar levemente truncada, mas o cliente não vê o URL duplicado.
+    """
+    dominio = _dominio_site()
+    if not dominio:
+        return texto
+    padrao = re.compile(
+        r"(?:\b(?:em|no|l[áa]|aqui|pelo)\s+)?"          # conectivo opcional
+        r"(?:link\s+(?:do\s+)?site|site|l[áa])?"        # noun-phrase opcional
+        r"\s*[:\-—]?\s*"                                # separador opcional
+        r"(?:https?://)?(?:www\.)?" + re.escape(dominio) + r"(?:/\S*)?",
+        re.IGNORECASE,
+    )
+    texto_limpo = padrao.sub("", texto)
+    texto_limpo = re.sub(r"\s+([.!?,;:])", r"\1", texto_limpo)
+    texto_limpo = re.sub(r"\s{2,}", " ", texto_limpo)
+    return texto_limpo.strip()
 
 
 # --- Schemas ---
@@ -101,6 +129,14 @@ class EnviarMensagemTool(BaseTool):
 
         to = numero if numero.startswith("+") else f"+{numero}"
         texto = texto.encode("utf-8", errors="ignore").decode("utf-8")
+
+        # Cooldown do link do site: 30 min por número. Se a Bia tentar reenviar
+        # o URL dentro da janela, removemos o link antes do envio (texto continua,
+        # só o URL some). Evita repetição sem perder o teor da mensagem.
+        site_mencionado_originalmente = _texto_redireciona_ao_site(texto)
+        if site_mencionado_originalmente and store.site_em_cooldown(numero):
+            texto = _remover_url_site(texto)
+
         url = f"https://graph.facebook.com/v19.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
         headers = {
             "Authorization": f"Bearer {settings.WHATSAPP_TOKEN}",
@@ -122,10 +158,13 @@ class EnviarMensagemTool(BaseTool):
             # se o link no .env mudasse).
             if settings.GRUPO_LINK and settings.GRUPO_LINK in texto:
                 store.merge_sessao(numero, grupo_convidado=True)
-            # Conta redirecionamento ao site. Após 2 nesta conversa, a 3ª
-            # iteração da Bia é escalada silenciosamente para humano (webhook).
+            # Conta redirecionamento ao site. Considera apenas envio efetivo
+            # do URL (o cooldown pode ter removido o link entre a chamada e o
+            # POST). Após 2 envios nesta conversa, a 3ª iteração da Bia é
+            # escalada silenciosamente para humano.
             if _texto_redireciona_ao_site(texto):
                 store.contar_redirect_site(numero)
+                store.marcar_site_enviado(numero)  # arma cooldown de 30 min
             return "mensagem_enviada"
         except httpx.HTTPStatusError as e:
             return f"erro_envio: {e} | body: {e.response.text}"
