@@ -78,7 +78,11 @@ def build_wholesale_agent() -> Agent:
             "5) NUNCA invente memória de interação passada ('novamente', 'da última vez', "
             "'que bom ter você de volta') sem evidência clara no histórico.\n"
             "6) NUNCA negue, minimize ou questione a disponibilidade do site — ele está "
-            "ativo e é o destino principal de compra."
+            "ativo e é o destino principal de compra.\n"
+            "7) NUNCA trate intenção ou fala PASSADA do cliente ('vou fazer o cadastro', "
+            "'depois eu compro') como fato presente. Conversa de outro dia é pano de fundo, "
+            "não continuação automática. JAMAIS diga 'que bom que você decidiu/fez X' sem "
+            "o cliente confirmar AGORA, nesta mensagem — no máximo pergunte se ele fez."
         ),
         llm=settings.WHOLESALE_MODEL,
         tools=[consultar_cliente, consultar_site, escalar_humano, buscar_contexto_sessao, enviar_mensagem, enviar_catalogo, salvar_contexto_sessao, registrar_conversa],

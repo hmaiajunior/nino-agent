@@ -1,7 +1,9 @@
 """Orquestração principal do NinoAgent."""
 
+import re
 import uuid
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from crewai import Crew, Task, Process
 
 import src.observability  # noqa: F401 — ativa litellm.success_callback para LangFuse
@@ -18,12 +20,41 @@ _JANELA_RECENTES = 12   # nº de msgs recentes mantidas literais no prompt
 _LIMITE_RESUMO = 16     # acima disso, ativa o esquema com resumo
 _TRIGGER_REGERAR = 8    # regenera resumo quando histórico cresceu N msgs além do ponto resumido
 
+# Saudação pura: mensagem que é só cumprimento, sem pedido. Quando o cliente
+# reabre com "boa noite" dias depois, NÃO devemos continuar a thread antiga.
+_RE_SAUDACAO = re.compile(
+    r"^[\s\W]*(oi+|ol[áa]+|opa+|e a[ií]+|eai|bom dia|boa tarde|boa noite|boa madrugada|"
+    r"ola|hey|hello|hi|tudo bem|tudo bom|blz|beleza)[\s\W]*$",
+    re.IGNORECASE,
+)
+
+
+def _so_saudacao(texto: str) -> bool:
+    """True se a mensagem do cliente é apenas um cumprimento, sem pedido."""
+    return bool(_RE_SAUDACAO.match((texto or "").strip()))
+
+
+def _dias_desde(criado_em) -> int | None:
+    """Dias decorridos (data, fuso SP) desde um timestamp do Postgres.
+
+    None quando indeterminado. Usado para decidir se uma conversa anterior é a
+    MESMA thread (mesmo dia) ou um contato ANTIGO que não deve ser continuado.
+    """
+    if not isinstance(criado_em, datetime):
+        return None
+    tz = ZoneInfo(settings.HORARIO_ATENDIMENTO_TZ)
+    ref = criado_em.replace(tzinfo=tz) if criado_em.tzinfo is None else criado_em.astimezone(tz)
+    return (datetime.now(tz).date() - ref.date()).days
+
 
 async def _resumo_de_conversas_antigas(numero: str, sessao: dict) -> str:
     """H6 — Resumo de interações anteriores (sessões já encerradas).
 
-    Cliente que volta após dias deve perceber que somos contínuos. Persistido
-    em `contexto_anterior` da sessão: regerado só uma vez por sessão Redis.
+    Cliente que volta deve perceber que somos contínuos — MAS sem que o agente
+    trate uma conversa de dias atrás como se continuasse agora. O bloco gerado é
+    datado: se foi em outro dia, instrui a Bia a tratar a mensagem atual como
+    novo contato (anti-alucinação de "você decidiu/fez X"). Persistido em
+    `contexto_anterior`: regerado só uma vez por sessão Redis.
     """
     if "contexto_anterior" in sessao:
         return sessao["contexto_anterior"] or ""
@@ -32,27 +63,49 @@ async def _resumo_de_conversas_antigas(numero: str, sessao: dict) -> str:
     n_atual = len(sessao.get("historico", []))
     n_antigas = max(0, len(total) - n_atual)
     antigas = total[:n_antigas]
-    if len(antigas) >= 4:
-        antigas_fmt = [{"role": m["role"], "text": m.get("text", "")} for m in antigas if m.get("text")]
-        resumo = await resumir_historico(antigas_fmt) if antigas_fmt else ""
+
+    if len(antigas) < 4:
+        merge_sessao(numero, contexto_anterior="")
+        return ""
+
+    antigas_fmt = [{"role": m["role"], "text": m.get("text", "")} for m in antigas if m.get("text")]
+    resumo = await resumir_historico(antigas_fmt) if antigas_fmt else ""
+    if not resumo:
+        merge_sessao(numero, contexto_anterior="")
+        return ""
+
+    dias = _dias_desde(antigas[-1].get("criado_em"))
+    if dias and dias >= 1:
+        quando = "ONTEM" if dias == 1 else f"HÁ {dias} DIAS"
+        bloco = (
+            f"ESTE CLIENTE JÁ CONVERSOU COM VOCÊ {quando} (NÃO agora). Resumo daquela "
+            "conversa, APENAS como pano de fundo: " + resumo +
+            " IMPORTANTE: trate a mensagem ATUAL como um novo contato. NÃO presuma que o "
+            "assunto antigo continua, NEM afirme que o cliente fez/decidiu algo — só ele "
+            "confirma isso agora. NÃO diga 'que bom que você decidiu/fez X'. Se for "
+            "relevante, PERGUNTE (ex: 'dias atrás você ia fazer o cadastro — conseguiu?'). "
+            "Não recomece a apresentação."
+        )
     else:
-        resumo = ""
-    merge_sessao(numero, contexto_anterior=resumo)
-    return resumo
+        bloco = (
+            "ESTE CLIENTE JÁ CONVERSOU COM VOCÊ HOJE (mesma conversa, ainda recente). "
+            "Resumo: " + resumo +
+            " Retome de onde parou, sem recomeçar a apresentação. Ainda assim, NÃO afirme "
+            "que ele fez/decidiu algo que não tenha confirmado no histórico."
+        )
+    merge_sessao(numero, contexto_anterior=bloco)
+    return bloco
 
 
 async def _montar_contexto_historico(numero: str, msgs_anteriores: list[dict], sessao: dict) -> str:
     """Constrói o trecho de histórico para o prompt — H6 (conversas anteriores) + H9 (janela)."""
     partes: list[str] = []
 
-    # H6 — conversas anteriores (de antes da sessão atual)
+    # H6 — conversas anteriores (de antes da sessão atual). O bloco já vem
+    # datado e com a instrução correta (continuar vs. tratar como novo contato).
     contexto_anterior = await _resumo_de_conversas_antigas(numero, sessao)
     if contexto_anterior:
-        partes.append(
-            "ESTE CLIENTE JÁ CONVERSOU COM VOCÊ ANTES. "
-            "Resumo das interações passadas: " + contexto_anterior +
-            " NÃO recomece a apresentação — retome de onde parou."
-        )
+        partes.append(contexto_anterior)
 
     # H9 — janela da sessão atual
     if msgs_anteriores:
@@ -138,10 +191,23 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
         m.get("role") in ("agente", "humano") for m in sessao.get("historico", [])
     )
     nota_saudacao = (
-        "Esta é a PRIMEIRA mensagem que você responde a este cliente — comece "
-        "com saudação curta e simpática (\"Oi! Que bom te ver por aqui\") "
-        "ANTES de responder à dúvida. NÃO se apresente como Bia (cliente já vê "
-        "a foto da loja); só seja calorosa.\n" if primeira_interacao else ""
+        "Esta é a PRIMEIRA mensagem que você responde a este cliente nesta conversa — "
+        "comece com saudação curta e simpática (ex: \"Oi! 😊\") ANTES de responder à "
+        "dúvida. NÃO se apresente como Bia (cliente já vê a foto da loja). NÃO use "
+        "frases de reencontro (\"de novo\", \"que bom te ver por aqui\", \"de volta\") "
+        "a menos que o contexto datado acima confirme conversa recente.\n"
+        if primeira_interacao else ""
+    )
+
+    # Saudação pura (fix anti-alucinação): cliente reabriu só com "boa noite" etc.
+    # Sem isto, a Bia tende a continuar uma thread antiga e presumir intenção.
+    nota_saudacao_pura = (
+        "A mensagem ATUAL do cliente é APENAS uma saudação, sem pedido. Responda com um "
+        "cumprimento curto e pergunte como pode ajudar HOJE (ex: \"Oi! Como posso te "
+        "ajudar hoje? 😊\"). NÃO faça pitch, NÃO presuma assunto, NÃO retome tópico de "
+        "conversa anterior nem afirme que o cliente decidiu/fez algo — espere ele dizer "
+        "o que quer.\n"
+        if _so_saudacao(mensagem) else ""
     )
 
     # Cooldown do link do site: se já enviei nos últimos 30min, NÃO mando de novo.
@@ -162,6 +228,7 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             f"membro_grupo={membro_grupo}) enviou: '{mensagem}'.\n"
             f"{contexto_historico}\n"
             + nota_saudacao
+            + nota_saudacao_pura
             + nota_cooldown_site +
 
             "ESTILO: vendedora consultiva no WhatsApp. Valide a dúvida ('faz sentido', "
