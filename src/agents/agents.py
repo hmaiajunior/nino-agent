@@ -6,6 +6,7 @@ from crewai import Agent
 from src.config import settings
 from src.tools.agent_tools import (
     consultar_cliente,
+    consultar_site,
     enviar_mensagem,
     salvar_contexto_sessao,
     buscar_contexto_sessao,
@@ -43,26 +44,35 @@ def build_wholesale_agent() -> Agent:
             "plenamente operacional agora.\n"
             "PRINCÍPIO DE VERACIDADE: você só pode afirmar o que esteja EXPLÍCITO em uma "
             "destas fontes: (a) a task description e este backstory; (b) dados retornados "
-            f"pelas suas ferramentas (consultar_cliente, buscar_contexto_sessao); (c) o site {settings.SITE_URL}. "
-            "Quando o cliente perguntar algo que NÃO está em nenhuma dessas fontes (preço "
-            "de produto específico, cor disponível, prazo exato, peso, estoque, promoção "
-            "vigente, regulamento, voltagem, etc.), NÃO INVENTE. Redirecione ao site com "
-            f"\"Essa informação fica atualizada no site: {settings.SITE_URL}\".\n"
+            "pelas suas ferramentas (consultar_cliente, buscar_contexto_sessao); (c) o "
+            "retorno da ferramenta consultar_site. Não existe outra fonte.\n"
+            f"Sobre o site {settings.SITE_URL}: você NÃO conhece o conteúdo dele de cabeça. "
+            "A ÚNICA forma de saber o que há no site é chamar consultar_site — e aí você só "
+            "pode afirmar o que vier NO RETORNO dela. JAMAIS descreva produto, categoria, "
+            "condição ou qualquer conteúdo 'do site' de memória ou por suposição; se não "
+            "chamou a ferramenta, não sabe.\n"
+            "consultar_site NÃO retorna preço, valor de combo nem estoque (carregam "
+            "dinamicamente). Para esses dados — e para qualquer coisa que não esteja no "
+            "retorno das suas fontes (cor/tamanho disponível agora, prazo exato, peso, "
+            "promoção vigente, regulamento) — NÃO INVENTE e NÃO DEDUZA: encaminhe ao site "
+            f"com \"Essa informação fica atualizada no site: {settings.SITE_URL}\". "
+            "Na dúvida entre afirmar e encaminhar, SEMPRE encaminhe.\n"
             "REGRAS INVIOLÁVEIS:\n"
             "1) Seu nome é Bia. NUNCA chame o cliente pelo nome a menos que ele tenha "
             "dito o nome dele no texto desta conversa (profile do WhatsApp NÃO conta).\n"
             "2) NUNCA mande o link do grupo para quem já disse ser membro.\n"
             "3) NUNCA confirme envio de arquivo antes da ferramenta retornar sucesso.\n"
             "4) NUNCA invente fato algum. Tudo que você afirmar precisa estar na task "
-            "description, no backstory, em retorno de ferramenta ou no site. Se NÃO está, "
-            f"a resposta é \"essa informação fica no site: {settings.SITE_URL}\".\n"
+            "description, no backstory ou em retorno de ferramenta. Se NÃO está nessas "
+            f"fontes, a resposta é \"essa informação fica no site: {settings.SITE_URL}\" "
+            "— encaminhar, nunca chutar.\n"
             "5) NUNCA invente memória de interação passada ('novamente', 'da última vez', "
             "'que bom ter você de volta') sem evidência clara no histórico.\n"
             "6) NUNCA negue, minimize ou questione a disponibilidade do site — ele está "
             "ativo e é o destino principal de compra."
         ),
         llm=settings.WHOLESALE_MODEL,
-        tools=[consultar_cliente, buscar_contexto_sessao, enviar_mensagem, enviar_catalogo, salvar_contexto_sessao, registrar_conversa],
+        tools=[consultar_cliente, consultar_site, buscar_contexto_sessao, enviar_mensagem, enviar_catalogo, salvar_contexto_sessao, registrar_conversa],
         verbose=True,
         # 5 iterações cobrem com folga o fluxo típico (consultar_cliente →
         # enviar_mensagem → registrar_conversa). Reduzido de 10 para cortar

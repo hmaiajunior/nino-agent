@@ -2,6 +2,8 @@
 
 import json
 import re
+from html import unescape
+from urllib.parse import quote
 from typing import Type
 from pydantic import BaseModel, Field
 from crewai.tools import BaseTool
@@ -9,6 +11,22 @@ from crewai.tools import BaseTool
 import httpx
 from src.config import settings
 from src.storage import store
+
+
+def _html_para_texto(html: str, limite: int = 2500) -> str:
+    """Extrai texto visível de uma página HTML (sem dependência de parser externo).
+
+    Remove blocos de script/style, tira as tags, decodifica entidades e colapsa
+    espaços. Trunca em `limite` chars — o suficiente para o agente ter contexto
+    sem estourar o prompt. Não interpreta JS: conteúdo carregado client-side
+    (ex.: preços do ecommerce Next.js) NÃO aparece aqui — por isso preço/estoque
+    seguem indo para o site, e o agente nunca os inventa.
+    """
+    html = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    texto = re.sub(r"<[^>]+>", " ", html)
+    texto = unescape(texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto[:limite]
 
 
 def _dominio_site() -> str:
@@ -94,6 +112,15 @@ class DataSchema(BaseModel):
 
 class QuerySchema(BaseModel):
     query: str = Field(description="Texto para busca semântica")
+
+class ConsultaSiteSchema(BaseModel):
+    consulta: str = Field(
+        default="",
+        description=(
+            "Termo a buscar no site (ex: 'camiseta dinossauro', 'conjunto moletom'). "
+            "Deixe vazio para consultar a página inicial (categorias e condições gerais)."
+        ),
+    )
 
 
 # --- Tools ---
@@ -413,8 +440,54 @@ class EnviarCatalogTool(BaseTool):
             return f"erro_envio: {e}"
 
 
+class ConsultarSiteTool(BaseTool):
+    name: str = "consultar_site"
+    description: str = (
+        "Consulta o conteúdo PÚBLICO do site oficial da loja em tempo real "
+        "(categorias, nomes de produtos, condições de atacado, formas de pagamento, "
+        "textos institucionais). Passe `consulta` com o termo buscado "
+        "(ex: 'camiseta dinossauro') ou vazio para a página inicial. "
+        "USE esta ferramenta ANTES de afirmar QUALQUER coisa sobre o que existe no "
+        "site — só pode afirmar o que vier no retorno dela. "
+        "ATENÇÃO: o site NÃO expõe preço, valor de combo nem estoque por aqui (carregam "
+        "dinamicamente); se o cliente pedir esses dados, encaminhe-o ao site, não invente."
+    )
+    args_schema: Type[BaseModel] = ConsultaSiteSchema
+
+    def _run(self, consulta: str = "") -> str:
+        consulta = (consulta or "").strip()
+        base = settings.SITE_URL.rstrip("/")
+        url = f"{base}/busca?q={quote(consulta)}" if consulta else base
+        try:
+            r = httpx.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; NinoAgent/1.0)"},
+                timeout=15,
+                follow_redirects=True,
+            )
+            r.raise_for_status()
+        except Exception as e:
+            return (
+                f"erro_consulta: não consegui acessar o site agora ({e}). "
+                f"NÃO invente o conteúdo — encaminhe o cliente para {base}."
+            )
+
+        texto = _html_para_texto(r.text)
+        if not texto:
+            return (
+                "sem_conteudo: a página não retornou texto utilizável. "
+                f"Encaminhe o cliente para {base} em vez de afirmar qualquer coisa."
+            )
+        rotulo = f"busca por '{consulta}'" if consulta else "página inicial"
+        return (
+            f"conteudo_site ({rotulo}) — afirme APENAS o que está abaixo; "
+            f"se a info pedida (ex: preço/estoque) não estiver aqui, encaminhe ao site:\n{texto}"
+        )
+
+
 # Instâncias prontas para uso
 consultar_cliente = ConsultarClienteTool()
+consultar_site = ConsultarSiteTool()
 enviar_mensagem = EnviarMensagemTool()
 salvar_contexto_sessao = SalvarContextoSessaoTool()
 buscar_contexto_sessao = BuscarContextoSessaoTool()
