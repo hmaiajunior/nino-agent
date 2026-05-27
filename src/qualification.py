@@ -104,19 +104,19 @@ def _inferir_tipo_campanha(referral: dict, mensagem: str) -> str | None:
 async def _enviar_qualificacao_botoes(numero: str) -> None:
     texto = (
         "Olá! Seja bem-vindo(a) à PlayBeKids 👶🏻👕 "
-        "Sou a Bia. Pra te direcionar certinho:"
+        "Sou a Bia e já te ajudo 😊 Só me fala no que você tem interesse:"
     )
     await enviar_botoes(
         numero,
         texto,
         [
-            {"id": "qual:atacado", "title": "Sou lojista"},
-            {"id": "qual:varejo", "title": "Compra própria"},
+            {"id": "qual:atacado", "title": "Atacado"},
+            {"id": "qual:varejo", "title": "Varejo"},
         ],
     )
     store.append_historico(numero, {
         "role": "agente",
-        "text": texto + " [botões: Sou lojista | Compra própria]",
+        "text": texto + " [botões: Atacado | Varejo]",
     })
     store.salvar_mensagem_sessao(numero, "agente", text=texto, type="text")
 
