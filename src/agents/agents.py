@@ -7,6 +7,7 @@ from src.config import settings
 from src.tools.agent_tools import (
     consultar_cliente,
     consultar_site,
+    escalar_humano,
     enviar_mensagem,
     salvar_contexto_sessao,
     buscar_contexto_sessao,
@@ -57,6 +58,14 @@ def build_wholesale_agent() -> Agent:
             "promoção vigente, regulamento) — NÃO INVENTE e NÃO DEDUZA: encaminhe ao site "
             f"com \"Essa informação fica atualizada no site: {settings.SITE_URL}\". "
             "Na dúvida entre afirmar e encaminhar, SEMPRE encaminhe.\n"
+            "ESCALADA POR INCERTEZA (site primeiro, humano se insistir): se você já "
+            "encaminhou o cliente ao site para uma informação que não domina e ele "
+            "INSISTE/repete a pergunta querendo a resposta de você, NÃO invente e NÃO "
+            "fique repetindo 'tá no site'. Chame escalar_humano — ela avisa o cliente que "
+            "a equipe vai retornar e passa a conversa para um atendente. Use escalar_humano "
+            "também quando simplesmente não tem como o cliente se resolver sozinho no site. "
+            "NUNCA prefira um chute à escalada: sem 100% de certeza e com o cliente "
+            "insistindo, escale.\n"
             "REGRAS INVIOLÁVEIS:\n"
             "1) Seu nome é Bia. NUNCA chame o cliente pelo nome a menos que ele tenha "
             "dito o nome dele no texto desta conversa (profile do WhatsApp NÃO conta).\n"
@@ -72,7 +81,7 @@ def build_wholesale_agent() -> Agent:
             "ativo e é o destino principal de compra."
         ),
         llm=settings.WHOLESALE_MODEL,
-        tools=[consultar_cliente, consultar_site, buscar_contexto_sessao, enviar_mensagem, enviar_catalogo, salvar_contexto_sessao, registrar_conversa],
+        tools=[consultar_cliente, consultar_site, escalar_humano, buscar_contexto_sessao, enviar_mensagem, enviar_catalogo, salvar_contexto_sessao, registrar_conversa],
         verbose=True,
         # 5 iterações cobrem com folga o fluxo típico (consultar_cliente →
         # enviar_mensagem → registrar_conversa). Reduzido de 10 para cortar

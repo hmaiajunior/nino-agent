@@ -485,9 +485,50 @@ class ConsultarSiteTool(BaseTool):
         )
 
 
+class EscalarHumanoSchema(BaseModel):
+    numero: str = Field(description="Número WhatsApp do cliente")
+    motivo: str = Field(
+        default="",
+        description="Motivo curto da escalada (ex: 'cliente insistiu em preço específico')",
+    )
+
+class EscalarHumanoTool(BaseTool):
+    name: str = "escalar_humano"
+    description: str = (
+        "Passa a conversa para um atendente humano. Use SOMENTE quando você não tem "
+        "100% de certeza da resposta E o cliente INSISTE/repete a pergunta depois de já "
+        "ter sido encaminhado ao site — ou seja, o site não resolveu e ele quer a "
+        "informação de você. NÃO use na primeira incerteza (primeiro encaminhe ao site) "
+        "nem para o que consultar_site/seu prompt já respondem. "
+        "Ao chamar, o cliente é avisado de que a equipe vai retornar e a conversa entra "
+        "em modo humano. Esta ferramenta JÁ envia a mensagem ao cliente: NÃO chame "
+        "enviar_mensagem no mesmo turno — escalar_humano substitui o envio."
+    )
+    args_schema: Type[BaseModel] = EscalarHumanoSchema
+
+    def _run(self, numero: str, motivo: str = "") -> str:
+        from src.whatsapp import enviar_whatsapp
+        from src.horario import aviso_horario_se_fora
+
+        if (store.buscar_sessao(numero) or {}).get("modo") == "humano":
+            return "ja_em_humano: conversa já está com atendente; não envie mais nada"
+
+        aviso = (
+            "Deixa eu confirmar isso certinho com nossa equipe pra te passar a "
+            "informação correta — já te retorno por aqui 😊"
+        )
+        aviso += aviso_horario_se_fora()
+        enviar_whatsapp(numero, aviso)
+        store.append_historico(numero, {"role": "agente", "text": aviso})
+        store.salvar_mensagem_sessao(numero, "agente", text=aviso, type="text")
+        store.merge_sessao(numero, modo="humano")
+        return f"escalado_humano (motivo: {motivo or 'incerteza'}). NÃO responda mais nada."
+
+
 # Instâncias prontas para uso
 consultar_cliente = ConsultarClienteTool()
 consultar_site = ConsultarSiteTool()
+escalar_humano = EscalarHumanoTool()
 enviar_mensagem = EnviarMensagemTool()
 salvar_contexto_sessao = SalvarContextoSessaoTool()
 buscar_contexto_sessao = BuscarContextoSessaoTool()

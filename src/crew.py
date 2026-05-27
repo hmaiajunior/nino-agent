@@ -189,6 +189,10 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             "Se a pergunta cai FORA destas fontes, NÃO INVENTE. Responda no formato:\n"
             f"  \"Essa informação fica atualizada no site: {site_url} 😊 Lá você confere "
             "com detalhe.\"\n"
+            "ESCALADA POR INCERTEZA: se você JÁ encaminhou ao site para essa dúvida e o "
+            "cliente INSISTE/repete querendo a resposta de você (veja o histórico), não "
+            "repita o site nem chute — chame escalar_humano. Ela avisa o cliente e passa "
+            "para um atendente. Sem 100% de certeza + cliente insistindo = escale.\n"
 
             "O QUE VOCÊ PODE AFIRMAR (está no prompt):\n"
             "- Faixa etária: 0 a 12 anos, moda masculina infantil.\n"
@@ -262,10 +266,12 @@ async def run_atendimento(numero_whatsapp: str, mensagem: str, origem: str = "or
             "• CATÁLOGO (lojista): use enviar_catalogo com o numero_whatsapp.\n"
 
             "PASSOS (nesta ordem):\n"
-            "1. enviar_mensagem EXATAMENTE UMA VEZ.\n"
+            "1. enviar_mensagem EXATAMENTE UMA VEZ — OU, se for escalar por incerteza, "
+            "chame escalar_humano no lugar (ela já envia a mensagem; NÃO faça as duas).\n"
             f"2. {encerramento}\n"
             f"3. registrar_conversa(numero_whatsapp='{numero_whatsapp}', tipo_cliente='{tipo}', "
-            f"origem='{sessao.get('origem', 'organico')}', status='resolvido')."
+            f"origem='{sessao.get('origem', 'organico')}', "
+            f"status='resolvido' (use 'pendente' se escalou para humano))."
         ),
         agent=wholesale,
         expected_output="Resposta enviada e conversa registrada com conversa_id",
