@@ -365,6 +365,26 @@ def encerrar_sessao(numero: str) -> None:
     redis_conn().delete(f"session:{numero}")
 
 
+def criar_sessao_humano(numero: str, tipo_cliente: str | None = None) -> dict:
+    """Cria uma sessão fresca em modo humano para reabrir conversa encerrada.
+
+    Usado pelo monitor quando o atendente quer retomar contato com um cliente
+    cuja sessão Redis expirou (>SESSION_TIMEOUT_MINUTES de inatividade). NÃO
+    contorna a janela de 24h da Meta API — quem decide se o envio passa é o
+    `enviar_whatsapp`/Meta. Esta função só prepara o estado interno.
+    """
+    sessao = {
+        "modo": "humano",
+        "historico": [],
+        "ultimo_processado_idx": 0,
+    }
+    if tipo_cliente:
+        sessao["tipo_cliente"] = tipo_cliente
+        sessao["cliente_recorrente"] = True
+    salvar_sessao(numero, sessao)
+    return sessao
+
+
 def _set_session_payload(pipe, key: str, payload: str, ttl_seconds: int) -> None:
     """Escreve a sessão preservando o TTL existente; usa setex só se chave nova.
 

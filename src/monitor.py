@@ -442,6 +442,29 @@ def _preview(historico: list[dict]) -> str:
     return msgs_cliente[-1][:60]
 
 
+def _meta_error(e: httpx.HTTPStatusError) -> str:
+    """Traduz erro HTTP da Meta API para mensagem útil ao atendente.
+
+    Cobre explicitamente o código 131047 (re-engagement message) — quando o
+    cliente está fora da janela de 24h e só dá pra reabrir com template.
+    """
+    try:
+        data = e.response.json()
+        err = data.get("error", {}) if isinstance(data, dict) else {}
+        code = err.get("code")
+        msg = err.get("message")
+        if code == 131047:
+            return (
+                "Fora da janela de 24h da Meta — só dá para reabrir com um template "
+                "aprovado (HSM). Este monitor ainda não envia template."
+            )
+        if code is not None and msg:
+            return f"Meta API rejeitou: [{code}] {msg}"
+    except Exception:
+        pass
+    return f"Meta API rejeitou: HTTP {e.response.status_code} — {e.response.text[:200]}"
+
+
 # --- Endpoints ---
 
 @router.get("/metricas")
@@ -556,20 +579,43 @@ def detalhar_conversa(numero: str, _=Depends(_token)):
 
 @router.post("/conversas/{numero}/assumir")
 def assumir_conversa(numero: str, _=Depends(_token)):
-    """Ativa modo humano: pausa o agente para esta conversa e avisa o cliente."""
-    if not store.buscar_sessao(numero):
-        raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
-    store.merge_sessao(numero, modo="humano")
+    """Ativa modo humano. Reabre conversa encerrada se estiver na janela 24h.
 
-    # H7: avisa o cliente da troca para que ele perceba que mudou de robô
-    # para pessoa. Diferentemente do _assumir_automatico (mídia), aqui a
-    # ação foi explícita do humano — vale dar a boas-vindas.
+    Conversa ativa (sessão Redis viva) → muda modo e manda aviso.
+    Conversa encerrada (sessão expirou) → tenta o aviso primeiro; se a Meta
+    rejeita (>24h), retorna 502 sem criar sessão fantasma. Só se o envio passar
+    é que criamos a sessão em modo humano, evitando estado inconsistente.
+    """
+    sessao = store.buscar_sessao(numero)
     aviso = f"Oi! Aqui é o time {settings.ATENDENTE_NOME}, vou continuar daqui pessoalmente 🙋"
-    enviar_whatsapp(numero, aviso)
+
+    if sessao:
+        store.merge_sessao(numero, modo="humano")
+        try:
+            enviar_whatsapp(numero, aviso, raise_on_error=True)
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=502, detail=_meta_error(e))
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Falha ao enviar aviso: {e}")
+        store.append_historico(numero, {"role": "humano", "text": aviso})
+        store.salvar_mensagem_sessao(numero, "humano", text=aviso, type="text")
+        return {"status": "assumido", "numero": numero}
+
+    # Sessão expirou: tentar reabrir.
+    cliente = store.buscar_cliente(numero)
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Número sem histórico — nada a reabrir")
+    try:
+        enviar_whatsapp(numero, aviso, raise_on_error=True)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=_meta_error(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha ao reabrir conversa: {e}")
+
+    store.criar_sessao_humano(numero, tipo_cliente=cliente.get("tipo"))
     store.append_historico(numero, {"role": "humano", "text": aviso})
     store.salvar_mensagem_sessao(numero, "humano", text=aviso, type="text")
-
-    return {"status": "assumido", "numero": numero}
+    return {"status": "reaberto", "numero": numero}
 
 
 @router.post("/conversas/{numero}/devolver")
@@ -668,7 +714,7 @@ def enviar_midia_humano(numero: str, file: UploadFile = File(...), _=Depends(_to
     """Faz upload de arquivo para a Meta API e envia ao cliente via WhatsApp."""
     sessao = store.buscar_sessao(numero)
     if not sessao:
-        raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
+        raise HTTPException(status_code=409, detail="Assuma a conversa primeiro (sessão expirada)")
     if sessao.get("modo") != "humano":
         raise HTTPException(status_code=409, detail="Conversa não está no modo humano")
 
@@ -733,11 +779,16 @@ def enviar_mensagem_humano(numero: str, body: _EnvioBody, _=Depends(_token)):
     """Envia mensagem manual via Meta API e registra no histórico Redis."""
     sessao = store.buscar_sessao(numero)
     if not sessao:
-        raise HTTPException(status_code=404, detail="Sessão não encontrada (conversa já encerrada)")
+        raise HTTPException(status_code=409, detail="Assuma a conversa primeiro (sessão expirada)")
     if sessao.get("modo") != "humano":
         raise HTTPException(status_code=409, detail="Conversa não está no modo humano")
 
-    enviar_whatsapp(numero, body.texto)
+    try:
+        enviar_whatsapp(numero, body.texto, raise_on_error=True)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=_meta_error(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha ao enviar: {e}")
 
     store.append_historico(numero, {"role": "humano", "text": body.texto})
     store.salvar_mensagem_sessao(numero, "humano", text=body.texto, type="text")

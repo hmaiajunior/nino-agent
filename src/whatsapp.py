@@ -23,16 +23,26 @@ def _payload(numero: str, texto: str) -> tuple[str, dict, dict]:
     return url, body, headers
 
 
-def enviar_whatsapp(numero: str, texto: str) -> None:
-    """Versão síncrona — para uso em handlers FastAPI sync e webhook callback."""
+def enviar_whatsapp(numero: str, texto: str, raise_on_error: bool = False) -> None:
+    """Versão síncrona — para uso em handlers FastAPI sync e webhook callback.
+
+    Por padrão, falhas são apenas logadas (fire-and-forget): caminhos de fluxo
+    automático não devem quebrar por erro transitório. Quando o chamador precisa
+    saber se o envio passou (ex.: monitor humano, onde a janela de 24h da Meta é
+    sinal importante para o atendente), passe `raise_on_error=True`.
+    """
     url, body, headers = _payload(numero, texto)
     try:
         r = httpx.post(url, json=body, headers=headers, timeout=10)
         r.raise_for_status()
     except httpx.HTTPStatusError as e:
         logger.error("Falha ao enviar WhatsApp para %s: HTTP %s — %s", numero, e.response.status_code, e.response.text)
+        if raise_on_error:
+            raise
     except Exception as e:
         logger.error("Falha ao enviar WhatsApp para %s: %s", numero, e)
+        if raise_on_error:
+            raise
 
 
 async def enviar_whatsapp_async(numero: str, texto: str) -> None:
